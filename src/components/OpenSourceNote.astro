@@ -1,0 +1,26 @@
+---
+// One line in every footer, signed in or not (decision 97): the dashboard is open-source
+// software under the MIT licence, with a link to the About page.
+import { t } from '../i18n';
+import { COPYRIGHT_YEAR } from '../lib/about';
+import { env } from '../lib/env';
+
+const { lang } = Astro.locals;
+---
+
+<p class="oss-note" data-testid="oss-note">
+  {t(lang, 'about.footer', { year: COPYRIGHT_YEAR, holder: env.copyrightHolder })} · <a href="/about">{t(lang, 'about.footer_link')}</a>
+</p>
+
+<style>
+  .oss-note {
+    margin: var(--space-1) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs, 0.75rem);
+  }
+  .oss-note a {
+    color: inherit;
+    text-decoration: underline;
+    white-space: nowrap;
+  }
+</style>

@@ -1,4 +1,22 @@
 {
+  "about": {
+    "title": "About this dashboard",
+    "intro": "The {app} is open-source software. Anyone may use, copy, change and share it under the MIT licence.",
+    "data_note": "The software is open. The programme's data is not: it stays private to the programme and is only shown to the people allowed to see it.",
+    "source_label": "Source code",
+    "source_link": "View the source code on GitHub",
+    "licence_label": "Licence",
+    "licence_name": "MIT licence",
+    "copyright_label": "Copyright",
+    "version_label": "Version",
+    "version_build": "{version} (build {commit})",
+    "licence_title": "Licence",
+    "licence_english": "The licence text below is in English, which is the authoritative version.",
+    "credits_title": "Built with open-source software",
+    "credits_intro": "The dashboard is built on these open-source projects, each under its own licence.",
+    "footer": "Open-source software · MIT licence · © {year} {holder}",
+    "footer_link": "About and source code"
+  },
   "app": {
     "name": "Pillar 1 Policy Reform Dashboard",
     "programme": "Green Growth Programme, DRC",

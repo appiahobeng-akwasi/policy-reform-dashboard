@@ -1,0 +1,113 @@
+---
+// About this dashboard (decision 97): open to everyone, signed in or not. The software is open
+// source under the MIT licence; the programme's data is not.
+import Base from '../layouts/Base.astro';
+import { t } from '../i18n';
+import { APP_VERSION, COPYRIGHT_YEAR, CREDITS, licenceParagraphs } from '../lib/about';
+import { env } from '../lib/env';
+
+const { lang } = Astro.locals;
+const holder = env.copyrightHolder;
+const commit = env.gitCommit;
+---
+
+<Base title={t(lang, 'about.title')}>
+  <article class="about stack" data-testid="about">
+    <h1>{t(lang, 'about.title')}</h1>
+    <p class="lead">{t(lang, 'about.intro', { app: t(lang, 'app.name') })}</p>
+    <p>{t(lang, 'about.data_note')}</p>
+
+    <dl class="facts">
+      <div>
+        <dt>{t(lang, 'about.source_label')}</dt>
+        <dd><a href={env.sourceCodeUrl} rel="noopener" data-testid="source-link">{t(lang, 'about.source_link')}</a></dd>
+      </div>
+      <div>
+        <dt>{t(lang, 'about.licence_label')}</dt>
+        <dd>{t(lang, 'about.licence_name')}</dd>
+      </div>
+      <div>
+        <dt>{t(lang, 'about.copyright_label')}</dt>
+        <dd data-testid="copyright">© {COPYRIGHT_YEAR} {holder}</dd>
+      </div>
+      <div>
+        <dt>{t(lang, 'about.version_label')}</dt>
+        <dd data-testid="version">{commit ? t(lang, 'about.version_build', { version: APP_VERSION, commit }) : APP_VERSION}</dd>
+      </div>
+    </dl>
+
+    <section class="stack">
+      <h2>{t(lang, 'about.licence_title')}</h2>
+      {lang !== 'en' && <p>{t(lang, 'about.licence_english')}</p>}
+      <div lang="en" class="licence" data-testid="licence">
+        {licenceParagraphs(holder).map((p) => <p>{p}</p>)}
+      </div>
+    </section>
+
+    <section class="stack">
+      <h2>{t(lang, 'about.credits_title')}</h2>
+      <p>{t(lang, 'about.credits_intro')}</p>
+      <ul class="credits" data-testid="credits">
+        {
+          CREDITS.map((c) => (
+            <li>
+              <a href={c.url} rel="noopener">{c.name}</a> · {c.licence}
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+  </article>
+</Base>
+
+<style>
+  .about {
+    max-width: 48rem;
+  }
+  .lead {
+    font-size: var(--text-lg, 1.125rem);
+  }
+  .facts {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+  }
+  .facts div {
+    display: grid;
+    grid-template-columns: 10rem 1fr;
+    gap: var(--space-3);
+  }
+  .facts dt {
+    color: var(--color-text-muted);
+  }
+  .facts dd {
+    margin: 0;
+  }
+  .licence {
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    padding: var(--space-4);
+    background: var(--color-surface-muted, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+  .licence p {
+    margin: 0 0 var(--space-3);
+  }
+  .licence p:first-child {
+    font-weight: 600;
+  }
+  .licence p:last-child {
+    margin-bottom: 0;
+  }
+  .credits {
+    margin: 0;
+    padding-left: var(--space-5, 1.25rem);
+  }
+  @media (max-width: 40rem) {
+    .facts div {
+      grid-template-columns: 1fr;
+      gap: 0;
+    }
+  }
+</style>

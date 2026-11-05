@@ -1,4 +1,22 @@
 {
+  "about": {
+    "title": "À propos de ce tableau de bord",
+    "intro": "Le {app} est un logiciel libre. Chacun peut l'utiliser, le copier, le modifier et le partager selon les termes de la licence MIT.",
+    "data_note": "Le logiciel est libre. Les données du programme ne le sont pas : elles restent privées au programme et ne sont montrées qu'aux personnes autorisées.",
+    "source_label": "Code source",
+    "source_link": "Voir le code source sur GitHub",
+    "licence_label": "Licence",
+    "licence_name": "Licence MIT",
+    "copyright_label": "Droit d'auteur",
+    "version_label": "Version",
+    "version_build": "{version} (compilation {commit})",
+    "licence_title": "Licence",
+    "licence_english": "Le texte de la licence ci-dessous est en anglais, qui fait foi.",
+    "credits_title": "Conçu avec des logiciels libres",
+    "credits_intro": "Le tableau de bord repose sur ces projets libres, chacun sous sa propre licence.",
+    "footer": "Logiciel libre · Licence MIT · © {year} {holder}",
+    "footer_link": "À propos et code source"
+  },
   "app": {
     "name": "Tableau de bord des réformes du Pilier 1",
     "programme": "Programme de croissance verte, RDC",

@@ -196,3 +196,25 @@ test('the sign-in page shows the programme brand beside the form, in both langua
   expect(lang!.y).toBeGreaterThanOrEqual(band!.y + band!.height - 1);
   await phone.close();
 });
+
+test('the open-source notice: on sign-in, on signed-in pages in both languages, and the About page without signing in (decision 97)', async ({ page }) => {
+  await page.goto('/sign-in');
+  await expect(page.getByTestId('oss-note')).toHaveText(/Open-source software · MIT licence · © 2026 Green Growth Programme/);
+
+  await page.getByTestId('oss-note').getByRole('link', { name: 'About and source code' }).click();
+  await expect(page).toHaveURL(/\/about$/);
+  await expect(page.getByRole('heading', { name: 'About this dashboard', level: 1 })).toBeVisible();
+  await expect(page.getByTestId('copyright')).toHaveText('© 2026 Green Growth Programme');
+  await expect(page.getByTestId('licence')).toContainText('Permission is hereby granted, free of charge');
+  await expect(page.getByTestId('source-link')).toHaveAttribute('href', 'https://github.com/appiahobeng-akwasi/policy-reform-dashboard');
+  await expect(page.getByTestId('credits')).toContainText('PostgreSQL');
+
+  await signIn(page, await createAccount('oss', { role: 'viewer_internal' }));
+  await page.goto('/executive');
+  await expect(page.getByTestId('oss-note')).toBeVisible();
+  await page.getByRole('button', { name: 'FR', exact: true }).click();
+  await expect(page.getByTestId('oss-note')).toHaveText(/Logiciel libre · Licence MIT/);
+  await page.goto('/about');
+  await expect(page.getByRole('heading', { name: 'À propos de ce tableau de bord', level: 1 })).toBeVisible();
+  await expect(page.getByText('Le texte de la licence ci-dessous est en anglais')).toBeVisible();
+});

@@ -218,3 +218,7 @@ At the top right of every page there is a switch: **EN | FR**.
 
 Dates are shown as 14 Nov 2026 in English and 14 nov. 2026 in French, in Kinshasa time.
 
+## About the dashboard
+
+The dashboard is open-source software under the MIT licence: anyone may use, copy, change and share the software. The programme's data is not open; it stays private to the programme. The line at the bottom of every page links to **About and source code**, which shows the licence, the copyright, the version you are using and a link to the source code. You can open it without signing in.
+

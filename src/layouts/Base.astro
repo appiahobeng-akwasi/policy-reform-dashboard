@@ -9,6 +9,7 @@ import AuthBrand from '../components/AuthBrand.astro';
 import BrandMark from '../components/BrandMark.astro';
 import Icon from '../components/Icon.astro';
 import LanguageSwitch from '../components/LanguageSwitch.astro';
+import OpenSourceNote from '../components/OpenSourceNote.astro';
 import Sidebar from '../components/Sidebar.astro';
 import TopBar from '../components/TopBar.astro';
 import { t } from '../i18n';
@@ -69,6 +70,7 @@ const counts = shell && access ? await shellCounts(user.claims, access) : { appr
           </main>
           <footer class="site-footer focus-footer">
             <p>{t(lang, 'app.programme')}</p>
+            <OpenSourceNote />
           </footer>
         </div>
       ) : shell && access ? (
@@ -81,6 +83,7 @@ const counts = shell && access ? await shellCounts(user.claims, access) : { appr
             </main>
             <footer class="site-footer">
               <p>{t(lang, 'app.programme')}</p>
+            <OpenSourceNote />
             </footer>
           </div>
         </div>
@@ -103,6 +106,7 @@ const counts = shell && access ? await shellCounts(user.claims, access) : { appr
             </main>
             <footer class="auth-foot">
               <p>{t(lang, 'auth.trouble')}</p>
+              <OpenSourceNote />
             </footer>
           </div>
         </div>
@@ -133,6 +137,7 @@ const counts = shell && access ? await shellCounts(user.claims, access) : { appr
           </main>
           <footer class="site-footer">
             <p>{t(lang, 'app.programme')}</p>
+            <OpenSourceNote />
           </footer>
         </div>
       )

@@ -1,6 +1,6 @@
 // Which pages need a signed-in user, and when MFA must be completed first.
 
-const PUBLIC_PATHS = new Set(['/', '/sign-in', '/auth/confirm', '/auth/sent', '/auth/sign-out', '/api/lang', '/404', '/healthz']);
+const PUBLIC_PATHS = new Set(['/', '/sign-in', '/auth/confirm', '/auth/sent', '/auth/sign-out', '/api/lang', '/404', '/healthz', '/about']);
 
 export function isPublicPath(path: string): boolean {
   // Schedulers call /api/jobs/<name> with a shared secret, not a session (decision 50).

@@ -27,6 +27,23 @@ export const env = {
     return required('DATABASE_URL');
   },
   /** Root certificate the database's certificate must chain to (PEM or base64 PEM, decision 91). */
+  /** Who holds the copyright in the open-source licence (decision 97). Adopters set their own. */
+  get copyrightHolder(): string {
+    return optional('COPYRIGHT_HOLDER') ?? 'Green Growth Programme';
+  },
+
+  /** Where the source code is published (decision 97). */
+  get sourceCodeUrl(): string {
+    const url = optional('SOURCE_CODE_URL') ?? 'https://github.com/appiahobeng-akwasi/policy-reform-dashboard';
+    return /^https:\/\//.test(url) ? url : 'https://github.com/appiahobeng-akwasi/policy-reform-dashboard';
+  },
+
+  /** The commit this copy was built from, when the host says (Vercel does), for the About page. */
+  get gitCommit(): string | undefined {
+    const sha = optional('VERCEL_GIT_COMMIT_SHA') ?? optional('GIT_COMMIT');
+    return sha && /^[0-9a-f]{7,40}$/.test(sha) ? sha.slice(0, 7) : undefined;
+  },
+
   /** DEMO_DATA=true: every page says the data is fictional (the public copy's demo seed, decision 95). */
   get demoData(): boolean {
     return optional('DEMO_DATA') === 'true';

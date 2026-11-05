@@ -40,6 +40,7 @@ Never put real programme data in a public repository. Keep your seed in a privat
 - **Time zone:** `DISPLAY_TIME_ZONE` in `src/i18n/index.ts` (Africa/Kinshasa by default). Times are stored in UTC.
 - **Schedules:** reminders, escalations, the weekly digest and the month-end snapshot are called on `POST /api/jobs/<name>` with `JOBS_SECRET`. Any scheduler works; `.github/workflows/scheduled-jobs.yml` is one example.
 - **Look and feel:** tokens in `src/styles/tokens.css`; the rules in `docs/08_DESIGN_SYSTEM.md`.
+- **Open-source notice:** every page links to the About page, which shows the MIT licence. Keep it: the licence requires the copyright notice to stay with the software. If you publish your own copy, set `COPYRIGHT_HOLDER` and `SOURCE_CODE_URL` so the page points to it, and keep the original notice in `LICENSE` beside yours.
 
 ## 5. Host it
 
