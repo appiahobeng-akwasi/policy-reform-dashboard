@@ -1,0 +1,86 @@
+# Weekly backup of the hosted database and evidence files (decision 65, decision 88), with
+# `npm run backup`. The backup is encrypted with a passphrase before it leaves the runner and is
+# kept as a workflow artifact for 30 days. Download it from the run page, then decrypt:
+#   gpg --decrypt backup.tar.gz.gpg | tar -xz
+# and restore with `npm run restore` (see docs/manuals/sops/backup-and-restore.md).
+# Still copy one backup a month to a second place under programme control.
+#
+# Set up once, as repository secrets (never commit these):
+#   DATABASE_SSL_CA         Supabase's root certificate in base64 (hosted:setup sets it)
+#   BACKUP_DATABASE_URL     the Supabase session pooler address (port 5432), not the direct one:
+#                           GitHub's runners have no IPv6
+#   S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY   as in the app
+#   BACKUP_PASSPHRASE       a long random passphrase, kept in the programme's password manager
+# Until BACKUP_DATABASE_URL and BACKUP_PASSPHRASE are set, every run stops and does nothing.
+name: Weekly backup
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Sundays, 04:00 Kinshasa
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Back up database and files
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      # Root certificate the database must chain to (decision 91): the backup verifies it.
+      DATABASE_SSL_CA: ${{ secrets.DATABASE_SSL_CA }}
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_REGION: ${{ secrets.S3_REGION }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      S3_FORCE_PATH_STYLE: 'true'
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: Check the backup is set up
+        id: setup
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "BACKUP_DATABASE_URL or BACKUP_PASSPHRASE is not set, so there is nothing to back up." >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.setup.outputs.ready == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install the PostgreSQL 17 client tools
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "PG_BIN_DIR=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+      - run: npm ci
+        if: steps.setup.outputs.ready == 'true'
+      - name: Back up
+        if: steps.setup.outputs.ready == 'true'
+        run: npm run backup -- --out backup-out
+      - name: Encrypt
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          tar -czf - -C backup-out . | gpg --batch --yes --symmetric --cipher-algo AES256 \
+            --passphrase-fd 3 --output backup.tar.gz.gpg 3<<<"$BACKUP_PASSPHRASE"
+          rm -rf backup-out
+          ls -lh backup.tar.gz.gpg >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          name: backup-${{ github.run_id }}
+          path: backup.tar.gz.gpg
+          retention-days: 30
+          if-no-files-found: error

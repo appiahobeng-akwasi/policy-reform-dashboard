@@ -1,0 +1,49 @@
+---
+// How far past or ahead of its due date an item is, on a 90-day scale (docs/08 v0.2 section 4):
+// coral for days overdue, emerald for days left. Decoration only: the text below it says the
+// date and the number of days, so it is hidden from screen readers.
+import { dueBar } from '../lib/charts';
+
+interface Props {
+  daysOverdue: number;
+  daysToDue: number | null;
+  hasDueDate: boolean;
+}
+const { daysOverdue, daysToDue, hasDueDate } = Astro.props;
+const bar = dueBar(daysOverdue, daysToDue, hasDueDate);
+// The fill width is a class in 5% steps: the content policy allows no inline style attributes.
+const step = bar ? Math.max(5, Math.round(bar.share * 20) * 5) : 0;
+---
+
+{
+  bar && (
+    <span class="due-bar" aria-hidden="true">
+      <span class={`due-fill due-${bar.tone} w-${step}`} />
+    </span>
+  )
+}
+
+<style>
+  .due-bar {
+    display: block;
+    position: relative;
+    height: 0.5rem;
+    margin-bottom: var(--space-1);
+    border-radius: var(--radius-round);
+    background: var(--color-surface-hover);
+    overflow: hidden;
+  }
+  .due-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: var(--radius-round);
+  }
+  .due-overdue {
+    background: var(--gradient-coral);
+  }
+  .due-ahead {
+    background: var(--gradient-emerald);
+  }
+</style>

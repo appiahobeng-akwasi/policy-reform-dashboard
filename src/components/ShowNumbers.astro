@@ -1,0 +1,35 @@
+---
+// "Show the numbers" (decision 87): the exact table behind a chart, folded away under it and
+// opened on request. The chart leads; the numbers are one click away, and always in the page.
+import { t } from '../i18n';
+
+interface Props {
+  testId?: string;
+  open?: boolean;
+}
+const { testId, open = false } = Astro.props;
+const { lang } = Astro.locals;
+---
+
+<details class="show-numbers" data-testid={testId} open={open}>
+  <summary>{t(lang, 'views.show_numbers')}</summary>
+  <slot />
+</details>
+
+<style>
+  .show-numbers {
+    margin-top: var(--space-3);
+  }
+  .show-numbers > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-link);
+    cursor: pointer;
+  }
+  .show-numbers[open] > summary {
+    margin-bottom: var(--space-3);
+  }
+</style>

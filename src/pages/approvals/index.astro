@@ -1,0 +1,170 @@
+---
+// The approvals inbox (spec 01 section 7, decision 79): updates waiting for the signed-in person,
+// grouped by who sent them, oldest first, with an overview beside them. "Nothing changed"
+// confirmations can be approved together (decision 37).
+import ApprovalList from '../../components/ApprovalList.astro';
+import EmptyState from '../../components/EmptyState.astro';
+import ObjectIcon from '../../components/ObjectIcon.astro';
+import Toast from '../../components/Toast.astro';
+import Base from '../../layouts/Base.astro';
+import { formatDate, t } from '../../i18n';
+import { approveConfirmations, loadQueue } from '../../lib/approvals';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fapprovals', 303);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const ids = form.getAll('submission_id').filter((v): v is string => typeof v === 'string' && /^[0-9a-f-]{36}$/.test(v));
+  const { approved, failed } = await approveConfirmations(user, ids);
+  return Astro.redirect(`/approvals?show=confirmations&approved=${approved}&failed=${failed}`, 303);
+}
+
+const onlyConfirmations = Astro.url.searchParams.get('show') === 'confirmations';
+const all = await loadQueue(user);
+const confirmations = all.filter((q) => q.isConfirmation);
+const updates = all.filter((q) => !q.isConfirmation);
+const queue = onlyConfirmations ? confirmations : all;
+const done = Astro.url.searchParams.get('done');
+const approved = Astro.url.searchParams.get('approved');
+const failed = Astro.url.searchParams.get('failed');
+const days = (iso: string) => Math.floor((Date.now() - Date.parse(iso.replace(' ', 'T'))) / 86_400_000);
+const oldest = updates[0] ? days(updates[0].createdAt) : 0;
+---
+
+<Base title={t(lang, 'approvals.title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'approvals.title')}</h1>
+    <p>{t(lang, 'approvals.intro')}</p>
+  </div>
+  {done === 'approved' && <Toast message={t(lang, 'approvals.approved')} testId="done" />}
+  {done === 'returned' && <Toast message={t(lang, 'approvals.returned')} testId="done" />}
+  {approved !== null && <Toast message={t(lang, 'approvals.batch_done', { approved, failed: failed ?? '0' })} testId="batch-done" />}
+  <nav class="tabs" aria-label={t(lang, 'approvals.title')}>
+    <a href="/approvals" aria-current={!onlyConfirmations ? 'page' : undefined}>
+      {t(lang, 'approvals.filter_all')} <span class="tab-pill">{all.length}</span>
+    </a>
+    <a href="/approvals?show=confirmations" aria-current={onlyConfirmations ? 'page' : undefined}>
+      {t(lang, 'approvals.filter_confirmations')} <span class="tab-pill">{confirmations.length}</span>
+    </a>
+  </nav>
+  {
+    queue.length === 0 ? (
+      <EmptyState message={t(lang, 'approvals.none')} />
+    ) : (
+      <div class="inbox">
+        <ApprovalList queue={queue} query={onlyConfirmations ? '?show=confirmations' : ''} />
+        <div class="main-pane">
+          {onlyConfirmations ? (
+            <form method="post" class="card stack" data-testid="batch">
+              <h2>{t(lang, 'approvals.batch_title')}</h2>
+              <p class="muted">{t(lang, 'approvals.batch_text')}</p>
+              <ul class="batch">
+                {confirmations.map((q) => (
+                  <li>
+                    <label class="inline">
+                      <input type="checkbox" name="submission_id" value={q.submissionId} checked />
+                      <ObjectIcon kind="confirmation" size="sm" />
+                      <span>
+                        <strong>{q.first ? `${q.first.id}${q.first.name ? `: ${q.first.name}` : ''}` : t(lang, 'approvals.confirmation')}</strong>
+                        <span class="sub">
+                          {q.submittedBy} · {formatDate(q.createdAt, lang)}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <p>
+                <button class="button" type="submit">
+                  {t(lang, 'approvals.approve_selected')}
+                </button>
+              </p>
+            </form>
+          ) : (
+            <div class="overview">
+              <a class="card summary" href={updates[0] ? `/approvals/${updates[0].submissionId}` : '/approvals'} data-testid="overview-updates">
+                <ObjectIcon kind="milestone" />
+                <span>
+                  <strong>{t(lang, 'approvals.overview_updates', { n: updates.length })}</strong>
+                  <span class="sub">{updates.length === 0 ? t(lang, 'approvals.overview_none') : oldest > 0 ? t(lang, 'approvals.overview_oldest', { days: oldest }) : t(lang, 'approvals.overview_today')}</span>
+                </span>
+                {updates.length > 0 && <span class="btn btn-secondary">{t(lang, 'approvals.start_review')}</span>}
+              </a>
+              <a class="card summary" href="/approvals?show=confirmations" data-testid="overview-confirmations">
+                <ObjectIcon kind="confirmation" />
+                <span>
+                  <strong>{t(lang, 'approvals.overview_confirmations', { n: confirmations.length })}</strong>
+                  <span class="sub">{t(lang, 'approvals.overview_confirmations_text')}</span>
+                </span>
+                {confirmations.length > 0 && <span class="btn btn-secondary">{t(lang, 'approvals.approve_together')}</span>}
+              </a>
+              <p class="muted choose">{t(lang, 'approvals.choose')}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+</Base>
+
+<style>
+  .inbox {
+    display: grid;
+    grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+    gap: var(--space-6);
+    align-items: start;
+  }
+  .overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+  .summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .summary > span:nth-child(2) {
+    display: grid;
+    flex: 1;
+  }
+  .summary strong {
+    font-size: var(--text-base);
+  }
+  .sub {
+    display: block;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-normal);
+  }
+  .choose {
+    margin-top: var(--space-2);
+  }
+  .batch {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-2);
+  }
+  .inline {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-weight: var(--weight-normal);
+  }
+  .main-pane {
+    min-width: 0;
+  }
+  @media (max-width: 899px) {
+    .inbox {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .summary {
+      flex-wrap: wrap;
+    }
+  }
+</style>

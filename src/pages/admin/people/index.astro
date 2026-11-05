@@ -1,0 +1,90 @@
+---
+// People who own items but do not sign in (decision 24). Admins only. Anyone with an account is
+// under users and access instead.
+import Base from '../../../layouts/Base.astro';
+import { t } from '../../../i18n';
+import { ADMIN_ROLES, listPeople, PAGE_SIZE } from '../../../lib/admin/users';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin%2Fpeople', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 100);
+const page = Math.max(1, Number.parseInt(Astro.url.searchParams.get('page') ?? '1', 10) || 1);
+const result = allowed ? await listPeople(user.claims, q, page) : null;
+const pages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
+const pageLink = (n: number) => {
+  const p = new URLSearchParams(Astro.url.searchParams);
+  p.set('page', String(n));
+  return `?${p.toString()}`;
+};
+---
+
+<Base title={t(lang, 'admin.people_title')}>
+  <p><a href="/admin/users">{t(lang, 'admin.back_users')}</a></p>
+  <h1>{t(lang, 'admin.people_title')}</h1>
+  {
+    !result ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        <p>{t(lang, 'admin.people_intro')}</p>
+        <p>
+          <a class="button" href="/admin/people/new">{t(lang, 'admin.add_person')}</a>
+        </p>
+        <form method="get" class="filters">
+          <div>
+            <label for="q">{t(lang, 'admin.search')}</label>
+            <input id="q" name="q" type="search" value={q} />
+          </div>
+          <button class="button" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+        <p class="muted">{t(lang, 'admin.count', { n: result.total })}</p>
+        {result.rows.length === 0 ? (
+          <p>{t(lang, 'admin.none_found')}</p>
+        ) : (
+          <div class="table-wrap">
+            <table class="data-table" data-testid="people">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'admin.name')}</th>
+                  <th scope="col">{t(lang, 'admin.institution')}</th>
+                  <th scope="col" class="number">{t(lang, 'admin.items_owned')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.rows.map((p) => (
+                  <tr>
+                    <th scope="row">
+                      <a href={`/admin/people/${p.personId}`}>{p.name}</a>
+                      {p.email && (
+                        <>
+                          <br />
+                          <span class="muted">{p.email}</span>
+                        </>
+                      )}
+                      {!p.isActive && (
+                        <>
+                          {' '}
+                          <span class="badge">{t(lang, 'admin.status_inactive')}</span>
+                        </>
+                      )}
+                    </th>
+                    <td>{[p.institution, p.roleTitle].filter(Boolean).join(', ')}</td>
+                    <td class="number">{p.items}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {pages > 1 && (
+          <nav class="pager">
+            {page > 1 && <a href={pageLink(page - 1)}>{t(lang, 'items.previous')}</a>}
+            <span>{t(lang, 'items.page', { n: page })}</span>
+            {page < pages && <a href={pageLink(page + 1)}>{t(lang, 'items.next')}</a>}
+          </nav>
+        )}
+      </>
+    )
+  }
+</Base>

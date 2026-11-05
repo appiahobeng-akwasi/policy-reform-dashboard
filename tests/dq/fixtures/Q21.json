@@ -1,0 +1,47 @@
+{
+  "rule": "Q21",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "readiness_assessment",
+        "op": "create",
+        "id": "RD-004",
+        "fields": {
+          "reform_id": "RA1",
+          "political_commitment": "medium",
+          "institutional_ownership": "medium",
+          "technical_readiness": "medium",
+          "financial_readiness": "medium",
+          "stakeholder_alignment": "medium",
+          "implementation_capacity": "medium",
+          "assessment_date": "2026-11-15",
+          "assessor": "Reform lead, RA1"
+        }
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "readiness_assessment",
+        "op": "create",
+        "id": "RD-004",
+        "fields": {
+          "reform_id": "RA1",
+          "political_commitment": "medium",
+          "institutional_ownership": "medium",
+          "technical_readiness": "medium",
+          "stakeholder_alignment": "medium",
+          "implementation_capacity": "medium",
+          "assessment_date": "2026-11-15",
+          "assessor": "Reform lead, RA1"
+        }
+      }
+    ],
+    "expect": {
+      "field": "financial_readiness"
+    }
+  }
+}

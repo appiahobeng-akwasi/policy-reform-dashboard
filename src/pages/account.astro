@@ -1,0 +1,83 @@
+---
+import Base from '../layouts/Base.astro';
+import { t, type MessageKey } from '../i18n';
+import { asUser } from '../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in', 303);
+
+// The daily reminder email can be turned off; notices and the weekly digest stay (decision 51).
+if (Astro.request.method === 'POST') {
+  const on = (await Astro.request.formData()).get('email_reminders') === 'on';
+  await asUser(user.claims, (db) => db.query('select set_my_email_reminders($1)', [on]));
+  return Astro.redirect('/account?saved=1', 303);
+}
+const emailReminders = await asUser(user.claims, async (db) => {
+  const { rows } = await db.query<{ on: boolean }>('select email_reminders as on from people where person_id = (me()).person_id');
+  return rows[0]?.on ?? true;
+});
+const saved = Astro.url.searchParams.get('saved') === '1';
+
+// Read through row-level security as this user: they see only their own scope rows.
+const reforms = await asUser(user.claims, async (db) => {
+  const { rows } = await db.query<{ reform_id: string }>('select reform_id from user_reform_scope order by reform_id');
+  return rows.map((row) => row.reform_id);
+});
+const allReforms = user.role === 'super_admin' || user.role === 'programme_admin';
+const reformText = allReforms ? t(lang, 'account.reforms_all') : reforms.length > 0 ? reforms.join(', ') : t(lang, 'account.reforms_none');
+---
+
+<Base title={t(lang, 'account.title')}>
+  <h1>{t(lang, 'account.title')}</h1>
+  <dl class="details">
+    <dt>{t(lang, 'account.name')}</dt>
+    <dd>{user.name}</dd>
+    <dt>{t(lang, 'account.email')}</dt>
+    <dd>{user.email}</dd>
+    <dt>{t(lang, 'account.role')}</dt>
+    <dd data-testid="role">{t(lang, `roles.${user.role}` as MessageKey)}</dd>
+    <dt>{t(lang, 'account.language')}</dt>
+    <dd>{t(lang, lang === 'en' ? 'language.en_name' : 'language.fr_name')}</dd>
+    <dt>{t(lang, 'account.reforms')}</dt>
+    <dd data-testid="reforms">{reformText}</dd>
+  </dl>
+
+  <h2>{t(lang, 'account.email_title')}</h2>
+  {saved && <p class="notice" role="status">{t(lang, 'account.email_saved')}</p>}
+  <form method="post" class="stack narrow">
+    <label class="inline">
+      <input type="checkbox" name="email_reminders" checked={emailReminders} />
+      {t(lang, 'account.email_reminders')}
+    </label>
+    <p class="muted">{t(lang, 'account.email_hint')}</p>
+    <button class="button" type="submit">{t(lang, 'account.email_save')}</button>
+  </form>
+</Base>
+
+<style>
+  .details {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2) var(--space-6);
+  }
+
+  dt {
+    font-weight: var(--weight-bold);
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  h2 {
+    margin-top: var(--space-8);
+  }
+
+  .inline {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    font-weight: var(--weight-normal);
+  }
+</style>

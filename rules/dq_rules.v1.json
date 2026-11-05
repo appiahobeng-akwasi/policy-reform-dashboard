@@ -1,0 +1,916 @@
+{
+  "ruleset_version": "1.0.0",
+  "effective_from": "2026-11-10",
+  "status": "draft for Project Lead approval",
+  "pass_rule": {
+    "blocking_failures_allowed": 0,
+    "quality_score_min": 80,
+    "file_rules_must_all_pass": true,
+    "threshold_configurable_by": "super_admin",
+    "score_formula": "100 * sum(weight * passed) / sum(weight * applicable), over every applicable (row, scored rule) pair; a submission with no applicable scored checks scores 100",
+    "rounding": "one decimal place; 79.95 rounds to 80.0 and passes"
+  },
+  "commit_policy": "all_or_nothing per submission; rejected submissions save nothing to live tables but are kept in staging for fix-and-retry",
+  "id_patterns": {
+    "reform": "^RA[0-9]$",
+    "workstream": "^WS-RA[0-9]-[0-9]{2}$",
+    "deliverable": "^DL-RA[0-9]-[0-9]{3}$",
+    "activity": "^AC-RA[0-9]-[0-9]{4}$",
+    "milestone": "^MS-[0-9]{3}$",
+    "reform_stage": "^PT-[0-9]{3}$",
+    "risk": "^RK-[0-9]{3}$",
+    "decision": "^DC-[0-9]{3}$",
+    "action": "^AN-[0-9]{4}$",
+    "evidence_item": "^EV-[0-9]{3,4}$",
+    "adaptation": "^AD-[0-9]{3}$",
+    "readiness_assessment": "^RD-[0-9]{3}$",
+    "indicator": "^[OP][0-9]\\.[0-9]{1,2}$"
+  },
+  "rules": [
+    {
+      "id": "F01",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "Extension is .xlsx or .csv. Reject .xlsm, .xls and anything with macros.",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "This file type is not accepted. Save it as .xlsx from the official template and upload again.",
+      "message_fr": "Ce type de fichier n'est pas accepté. Enregistrez-le au format .xlsx à partir du modèle officiel et réessayez."
+    },
+    {
+      "id": "F02",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "File size is 5 MB or less.",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "The file is larger than 5 MB. Split it into smaller files or remove unused sheets.",
+      "message_fr": "Le fichier dépasse 5 Mo. Divisez-le ou supprimez les feuilles inutilisées."
+    },
+    {
+      "id": "F03",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": "README!B2",
+      "check": "Template version cell equals a supported version (current and the one before).",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "This template version is out of date. Download the current template and copy your rows into it.",
+      "message_fr": "Cette version du modèle est obsolète. Téléchargez le modèle actuel et copiez-y vos lignes."
+    },
+    {
+      "id": "F04",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "At least one data sheet with a known name is present (Workstreams, Deliverables, Activities, Milestones, Stage_Updates, Risks, Decisions, Actions, Indicator_Values, Evidence_Register).",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "No recognised data sheet was found. Do not rename the template sheets.",
+      "message_fr": "Aucune feuille de données reconnue. Ne renommez pas les feuilles du modèle."
+    },
+    {
+      "id": "F05",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "Header row of every data sheet matches the template exactly (names and order).",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "The column headings on sheet {sheet} were changed. Restore them from the template.",
+      "message_fr": "Les en-têtes de colonnes de la feuille {sheet} ont été modifiés. Rétablissez-les à partir du modèle."
+    },
+    {
+      "id": "F06",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "No formulas in data cells. Values only.",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "Sheet {sheet} contains formulas (for example cell {cell}). Paste values only.",
+      "message_fr": "La feuille {sheet} contient des formules (par exemple la cellule {cell}). Collez uniquement des valeurs."
+    },
+    {
+      "id": "F07",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "At least one data row in total; no more than 2,000 rows per sheet.",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "The file has no data rows, or a sheet has more than 2,000 rows.",
+      "message_fr": "Le fichier ne contient aucune ligne de données, ou une feuille dépasse 2 000 lignes."
+    },
+    {
+      "id": "F08",
+      "tier": "file",
+      "applies_to": [
+        "file"
+      ],
+      "field": null,
+      "check": "SHA-256 of the file does not match an upload already accepted in the last 90 days.",
+      "weight": null,
+      "routes": [
+        "bulk_upload"
+      ],
+      "auto_fix": null,
+      "message_en": "This exact file was already accepted on {date}. Nothing new to load.",
+      "message_fr": "Ce fichier a déjà été accepté le {date}. Rien de nouveau à charger."
+    },
+    {
+      "id": "B01",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<id>",
+      "check": "ID present and matches the pattern for the entity (see id_patterns). Blank ID is allowed only on a new row in the web form, where the system assigns it.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: the ID \"{value}\" is missing or in the wrong format. Expected something like {example}.",
+      "message_fr": "Ligne {row} : l'identifiant « {value} » est manquant ou au mauvais format. Format attendu : {example}."
+    },
+    {
+      "id": "B02",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<id>",
+      "check": "ID is unique within the submission.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: ID {value} appears more than once in this file.",
+      "message_fr": "Ligne {row} : l'identifiant {value} apparaît plusieurs fois dans ce fichier."
+    },
+    {
+      "id": "B03",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<parent_id>",
+      "check": "Every parent or reference ID exists (reform_id, workstream_id, deliverable_id, milestone_id, indicator_code, linked object IDs).",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: {field} \"{value}\" does not exist. Check the spelling or create it first.",
+      "message_fr": "Ligne {row} : {field} « {value} » n'existe pas. Vérifiez l'orthographe ou créez-le d'abord."
+    },
+    {
+      "id": "B04",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<controlled>",
+      "check": "Every controlled field holds a value from its active list (status, RAG, stage, type, category, confidence, priority, treatment, decision type, trigger type, frequency, unit).",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: \"{value}\" is not an accepted value for {field}. Choose one of: {allowed}.",
+      "message_fr": "Ligne {row} : « {value} » n'est pas une valeur acceptée pour {field}. Choisissez parmi : {allowed}."
+    },
+    {
+      "id": "B05",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<date>",
+      "check": "Date fields are real dates (ISO or Excel date cells, not text and not bare numbers) between 2026-01-01 and 2031-12-31.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: {field} \"{value}\" is not a valid date between 2026 and 2031.",
+      "message_fr": "Ligne {row} : {field} « {value} » n'est pas une date valide entre 2026 et 2031."
+    },
+    {
+      "id": "B06",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "action"
+      ],
+      "field": "start_date,due_date,entry_date,exit_date",
+      "check": "Start or entry date is on or before due or exit date.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: the start date is after the due date.",
+      "message_fr": "Ligne {row} : la date de début est postérieure à la date d'échéance."
+    },
+    {
+      "id": "B07",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage"
+      ],
+      "field": "actual_date",
+      "check": "Actual or exit date is not in the future.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: the actual date {value} is in the future.",
+      "message_fr": "Ligne {row} : la date réelle {value} est dans le futur."
+    },
+    {
+      "id": "B08",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "risk",
+        "action"
+      ],
+      "field": "owner",
+      "check": "An owner is set on every active item (status not in (complete, cancelled)). Owner must be a registered person, not free text.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: no owner. Every open item needs a named person responsible.",
+      "message_fr": "Ligne {row} : aucun responsable. Chaque élément en cours doit avoir une personne nommée."
+    },
+    {
+      "id": "B09",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage"
+      ],
+      "field": "evidence",
+      "check": "Status complete requires at least one linked evidence item (existing EV- ID or an uploaded file) and an actual or exit date.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: marked complete with no evidence or completion date. Attach the evidence (minute, letter, report) and the date.",
+      "message_fr": "Ligne {row} : marqué terminé sans preuve ni date d'achèvement. Joignez la preuve (procès-verbal, lettre, rapport) et la date."
+    },
+    {
+      "id": "B10",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<number>",
+      "check": "Numeric fields are numbers in range: progress_pct 0 to 100; likelihood and impact 1 to 5; readiness score 0 to 100; indicator value not negative unless the indicator allows it.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: {field} \"{value}\" must be a number between {min} and {max}.",
+      "message_fr": "Ligne {row} : {field} « {value} » doit être un nombre entre {min} et {max}."
+    },
+    {
+      "id": "B11",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<reform_id>",
+      "check": "Uploader may write to the row's reform (user_reform_scope). For on-behalf entry, the subject person must also be in scope.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: you do not have permission to update {value}. Ask the administrator.",
+      "message_fr": "Ligne {row} : vous n'avez pas l'autorisation de modifier {value}. Contactez l'administrateur."
+    },
+    {
+      "id": "B12",
+      "tier": "blocking",
+      "applies_to": [
+        "indicator_value"
+      ],
+      "field": "period_end",
+      "check": "The reporting period is open. Values for a closed (locked) period cannot be changed by upload or form; use a change request.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: the period ending {value} is closed. Submit a change request instead.",
+      "message_fr": "Ligne {row} : la période se terminant le {value} est clôturée. Soumettez une demande de modification."
+    },
+    {
+      "id": "B13",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "actual_date",
+      "check": "Actual date is empty when status is not_started.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: an item that has not started cannot have an actual completion date.",
+      "message_fr": "Ligne {row} : un élément non démarré ne peut pas avoir de date d'achèvement réelle."
+    },
+    {
+      "id": "B14",
+      "tier": "blocking",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<text>",
+      "check": "Text cells contain no line of HTML or script and are 2,000 characters or fewer.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: {field} is too long or contains code.",
+      "message_fr": "Ligne {row} : {field} est trop long ou contient du code."
+    },
+    {
+      "id": "B15",
+      "tier": "blocking",
+      "applies_to": [
+        "evidence_item"
+      ],
+      "field": "file",
+      "check": "Evidence file: type is pdf, jpg, jpeg, png, docx or xlsx; size 10 MB or less after compression; not a duplicate (SHA-256) of an existing file.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "The evidence file is the wrong type, too large, or already uploaded as {existing}.",
+      "message_fr": "Le fichier de preuve est du mauvais type, trop volumineux ou déjà téléversé sous {existing}."
+    },
+    {
+      "id": "B16",
+      "tier": "blocking",
+      "applies_to": [
+        "evidence_item"
+      ],
+      "field": "links",
+      "check": "Evidence is linked to at least one object (reform, workstream, deliverable, activity, milestone, stage, decision, risk or indicator value).",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "This evidence is not linked to anything. Say which milestone, decision or indicator it supports.",
+      "message_fr": "Cette preuve n'est liée à rien. Indiquez le jalon, la décision ou l'indicateur qu'elle appuie."
+    },
+    {
+      "id": "X01",
+      "tier": "autofix",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<id>,<code>",
+      "check": "Trim leading and trailing spaces in IDs and codes.",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": "trim",
+      "message_en": "Row {row}: removed extra spaces in {field}.",
+      "message_fr": "Ligne {row} : espaces supprimés dans {field}."
+    },
+    {
+      "id": "X02",
+      "tier": "autofix",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "<controlled>",
+      "check": "Case-insensitive match to a list value is normalised to the canonical value (for example \"In Progress\" to in_progress).",
+      "weight": null,
+      "routes": "all",
+      "auto_fix": "normalise_case",
+      "message_en": "Row {row}: \"{value}\" read as \"{canonical}\".",
+      "message_fr": "Ligne {row} : « {value} » interprété comme « {canonical} »."
+    },
+    {
+      "id": "Q01",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "next_action",
+      "check": "Next action filled on active items.",
+      "weight": 3,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: add the next action so the team knows what happens next.",
+      "message_fr": "Ligne {row} : indiquez la prochaine action."
+    },
+    {
+      "id": "Q02",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage"
+      ],
+      "field": "blocker",
+      "check": "Blocker or comment filled when status is at_risk, delayed or blocked.",
+      "weight": 3,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: explain what is blocking or delaying this item.",
+      "message_fr": "Ligne {row} : expliquez ce qui bloque ou retarde cet élément."
+    },
+    {
+      "id": "Q03",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "forecast_date",
+      "check": "Forecast date given when status is delayed, or when due date has passed and status is not complete.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: give a new expected date.",
+      "message_fr": "Ligne {row} : indiquez une nouvelle date prévue."
+    },
+    {
+      "id": "Q04",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "status,due_date",
+      "check": "Status is not on_track when due date has passed and item is not complete.",
+      "weight": 3,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: the due date has passed but the status says on track. Update the status.",
+      "message_fr": "Ligne {row} : l'échéance est dépassée mais le statut indique « dans les temps ». Mettez à jour le statut."
+    },
+    {
+      "id": "Q05",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "progress_pct",
+      "check": "Progress agrees with status: complete is 100, not_started is 0, otherwise 1 to 99.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: progress {value}% does not match status {status}.",
+      "message_fr": "Ligne {row} : la progression {value} % ne correspond pas au statut {status}."
+    },
+    {
+      "id": "Q06",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "reform"
+      ],
+      "field": "rag_override_reason",
+      "check": "If a manual RAG differs from the computed RAG, a reason is given.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: you set RAG to {value}. Add the reason for overriding the calculated rating.",
+      "message_fr": "Ligne {row} : vous avez fixé le RAG à {value}. Ajoutez la raison de cette modification."
+    },
+    {
+      "id": "Q07",
+      "tier": "scored",
+      "applies_to": [
+        "milestone",
+        "deliverable",
+        "indicator_value"
+      ],
+      "field": "evidence_confidence",
+      "check": "Evidence confidence (high, medium, low) given.",
+      "weight": 1,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: rate how confident you are in the evidence.",
+      "message_fr": "Ligne {row} : évaluez votre niveau de confiance dans la preuve."
+    },
+    {
+      "id": "Q08",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone",
+        "reform_stage",
+        "risk",
+        "decision",
+        "action",
+        "indicator_value",
+        "evidence_item",
+        "adaptation",
+        "readiness_assessment"
+      ],
+      "field": "name,description",
+      "check": "Names and descriptions are at least 10 characters and are not placeholders (TBC, TBD, N/A, x, test, \"POC placeholder\", copied header names).",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: {field} looks like a placeholder. Write what it actually is.",
+      "message_fr": "Ligne {row} : {field} ressemble à un texte provisoire. Décrivez-le réellement."
+    },
+    {
+      "id": "Q09",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "depends_on",
+      "check": "Dependencies, when given, point to existing items and do not create a loop.",
+      "weight": 1,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: dependency {value} not found or creates a loop.",
+      "message_fr": "Ligne {row} : dépendance {value} introuvable ou circulaire."
+    },
+    {
+      "id": "Q10",
+      "tier": "scored",
+      "applies_to": [
+        "risk"
+      ],
+      "field": "mitigation,trigger,review_date",
+      "check": "Open risks have mitigation, trigger and review date.",
+      "weight": 3,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: an open risk needs a mitigation, a trigger and a review date.",
+      "message_fr": "Ligne {row} : un risque ouvert nécessite une mesure, un déclencheur et une date de revue."
+    },
+    {
+      "id": "Q11",
+      "tier": "scored",
+      "applies_to": [
+        "risk"
+      ],
+      "field": "residual_likelihood,residual_impact",
+      "check": "Residual score is not higher than inherent score.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: residual risk is higher than inherent risk. Check the scores.",
+      "message_fr": "Ligne {row} : le risque résiduel dépasse le risque inhérent."
+    },
+    {
+      "id": "Q12",
+      "tier": "scored",
+      "applies_to": [
+        "risk"
+      ],
+      "field": "review_date",
+      "check": "Review date for an open risk is not in the past.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: this risk was due for review on {value}. Review it and set the next date.",
+      "message_fr": "Ligne {row} : ce risque devait être revu le {value}."
+    },
+    {
+      "id": "Q13",
+      "tier": "scored",
+      "applies_to": [
+        "decision"
+      ],
+      "field": "follow_up_action,follow_up_owner,follow_up_due",
+      "check": "Open decisions have a follow-up action, owner and due date.",
+      "weight": 3,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: a decision needs a follow-up action, an owner and a due date.",
+      "message_fr": "Ligne {row} : une décision nécessite une action de suivi, un responsable et une échéance."
+    },
+    {
+      "id": "Q14",
+      "tier": "scored",
+      "applies_to": [
+        "indicator_value"
+      ],
+      "field": "evidence_basis",
+      "check": "Evidence basis given for every value.",
+      "weight": 3,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: say where this number comes from.",
+      "message_fr": "Ligne {row} : indiquez l'origine de ce chiffre."
+    },
+    {
+      "id": "Q15",
+      "tier": "scored",
+      "applies_to": [
+        "indicator_value"
+      ],
+      "field": "confidence",
+      "check": "Confidence level given.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: rate your confidence in this value.",
+      "message_fr": "Ligne {row} : évaluez votre confiance dans cette valeur."
+    },
+    {
+      "id": "Q16",
+      "tier": "scored",
+      "applies_to": [
+        "indicator_value"
+      ],
+      "field": "comment",
+      "check": "Proxy values carry a comment explaining the proxy.",
+      "weight": 1,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: explain what the proxy measures.",
+      "message_fr": "Ligne {row} : expliquez ce que mesure la valeur approximative."
+    },
+    {
+      "id": "Q17",
+      "tier": "scored",
+      "applies_to": [
+        "indicator_value"
+      ],
+      "field": "comment",
+      "check": "A change of more than 50% from the previous approved value carries a comment.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: the value moved from {prev} to {value}. Explain the change.",
+      "message_fr": "Ligne {row} : la valeur est passée de {prev} à {value}. Expliquez ce changement."
+    },
+    {
+      "id": "Q18",
+      "tier": "scored",
+      "applies_to": [
+        "indicator"
+      ],
+      "field": "target_type",
+      "check": "Each target states whether it is Year 1 or life of programme.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Indicator {value}: say whether the target is Year 1 or life of programme.",
+      "message_fr": "Indicateur {value} : précisez si la cible est annuelle (année 1) ou pour toute la durée du programme."
+    },
+    {
+      "id": "Q19",
+      "tier": "scored",
+      "applies_to": [
+        "evidence_item"
+      ],
+      "field": "source_institution,evidence_date,evidence_type",
+      "check": "Evidence has source institution, date and type.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Add the source institution, date and type of this evidence.",
+      "message_fr": "Ajoutez l'institution source, la date et le type de cette preuve."
+    },
+    {
+      "id": "Q20",
+      "tier": "scored",
+      "applies_to": [
+        "reform_stage"
+      ],
+      "field": "escalation_to",
+      "check": "Escalation target given when escalation_needed is true.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: escalation is needed. Say to whom.",
+      "message_fr": "Ligne {row} : une escalade est nécessaire. Indiquez à qui."
+    },
+    {
+      "id": "Q21",
+      "tier": "scored",
+      "applies_to": [
+        "readiness_assessment"
+      ],
+      "field": "<dimensions>,assessor",
+      "check": "All six readiness dimensions rated and assessor named.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Rate all six readiness dimensions and name the assessor.",
+      "message_fr": "Évaluez les six dimensions de préparation et nommez l’évaluateur."
+    },
+    {
+      "id": "Q22",
+      "tier": "scored",
+      "applies_to": [
+        "adaptation"
+      ],
+      "field": "rationale,approved_by,approval_date",
+      "check": "Approved adaptations carry rationale, approver and date.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: an approved change needs the reason, who approved it and when.",
+      "message_fr": "Ligne {row} : une modification approuvée doit indiquer la raison, l'approbateur et la date."
+    },
+    {
+      "id": "Q23",
+      "tier": "scored",
+      "applies_to": [
+        "workstream",
+        "deliverable",
+        "activity",
+        "milestone"
+      ],
+      "field": "last_update",
+      "check": "Item updated within the last 30 days (staleness). Checked on the stored record at each submission and nightly.",
+      "weight": 2,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Row {row}: not updated since {value}. Confirm it is still accurate.",
+      "message_fr": "Ligne {row} : non mis à jour depuis le {value}. Confirmez qu’il est toujours exact."
+    },
+    {
+      "id": "Q24",
+      "tier": "scored",
+      "applies_to": [
+        "indicator"
+      ],
+      "field": "unit",
+      "check": "Indicators whose name starts with \"Percentage\" use unit %.",
+      "weight": 1,
+      "routes": "all",
+      "auto_fix": null,
+      "message_en": "Indicator {value}: a percentage indicator must use the unit %.",
+      "message_fr": "Indicateur {value} : un indicateur en pourcentage doit utiliser l’unité %."
+    }
+  ],
+  "checksum_sha256_of_rules": "e5c4608ca4c8e82366e84810322793d665819c6708d8ee761f2f6dfd6c34c7e8"
+}

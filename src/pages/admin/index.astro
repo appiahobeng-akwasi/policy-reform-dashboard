@@ -1,0 +1,58 @@
+---
+// Admin hub (decision 60): the administrators' pages in one place, so the menu stays short.
+import Base from '../../layouts/Base.astro';
+import { t, type MessageKey } from '../../i18n';
+import { ADMIN_ROLES } from '../../lib/admin/users';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+const PAGES = [
+  { href: '/admin/data-quality', key: 'data_quality' },
+  { href: '/admin/users', key: 'users' },
+  { href: '/admin/people', key: 'people' },
+  { href: '/admin/jobs', key: 'jobs' },
+  { href: '/admin/errors', key: 'errors' },
+] as const;
+---
+
+<Base title={t(lang, 'admin.hub_title')}>
+  <h1>{t(lang, 'admin.hub_title')}</h1>
+  {
+    !allowed ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <ul class="hub">
+        {PAGES.map((p) => (
+          <li>
+            <a href={p.href}>{t(lang, `admin.hub_${p.key}` as MessageKey)}</a>
+            <p class="muted">{t(lang, `admin.hub_${p.key}_text` as MessageKey)}</p>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+</Base>
+
+<style>
+  .hub {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  }
+  .hub li {
+    padding: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+  .hub a {
+    font-weight: var(--weight-bold);
+    font-size: var(--text-lg);
+  }
+  .hub p {
+    margin: var(--space-1) 0 0;
+  }
+</style>

@@ -1,0 +1,70 @@
+---
+// A reform's pathway as connected steps (docs/08 v0.2 section 4): done in emerald, the current
+// stage in leaf with a ring, the rest to come. Each step names its stage for screen readers;
+// with `labels`, every stage under way shows under the track with its date (a reform can be in
+// two stages at once, decision 92).
+interface Props {
+  stages: { code: string; label: string; state: 'done' | 'current' | 'todo'; date?: string | null }[];
+  label: string;
+  labels?: boolean;
+}
+const { stages, label, labels = false } = Astro.props;
+const current = stages.filter((s) => s.state === 'current');
+---
+
+<div class="stage-track-wrap">
+  <ol class="stage-track" aria-label={label}>
+    {
+      stages.map((s) => (
+        <li class={`step-${s.state}`} data-stage={s.code} aria-current={s.state === 'current' ? 'step' : undefined}>
+          <span class="visually-hidden">{s.label}</span>
+        </li>
+      ))
+    }
+  </ol>
+  {
+    labels && current.length > 0 && (
+      <p class="stage-now" data-testid="stage-now">
+        {current.map((c, i) => (
+          <span class="stage-now-item">
+            {i > 0 && <span aria-hidden="true"> + </span>}
+            <strong>{c.label}</strong>
+            {c.date && <span> · {c.date}</span>}
+          </span>
+        ))}
+      </p>
+    )
+  }
+</div>
+
+<style>
+  .stage-track {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .stage-track li {
+    height: 0.4rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface-hover);
+  }
+  .stage-track li.step-done {
+    background: var(--gradient-emerald);
+  }
+  .stage-track li.step-current {
+    background: var(--gradient-leaf);
+    box-shadow: 0 0 0 2px #d9f0c2;
+  }
+  .stage-now {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .stage-now strong {
+    color: var(--color-text);
+  }
+</style>

@@ -1,0 +1,272 @@
+---
+// Overview board of the Pathway view (decision 89): every reform down the side, the eight stages
+// across, one dot per stage on a thin line that turns green as far as the reform has got. Each dot
+// is a link that opens the stage in the side panel and names reform, stage and status for screen
+// readers. A real table, so it reads row by row. On a phone the stage columns give way to the
+// reform's place in words and a small track.
+import { t } from '../i18n';
+import { reached, type StageState } from '../lib/pathway';
+import Icon from './Icon.astro';
+import ReformChip from './ReformChip.astro';
+import StageTrack from './StageTrack.astro';
+
+interface Cell {
+  code: string;
+  label: string;
+  state: StageState;
+  statusLabel: string;
+  escalation: boolean;
+  href: string;
+}
+interface Row {
+  reformId: string;
+  position: string;
+  cells: Cell[];
+}
+interface Props {
+  stageLabels: string[];
+  rows: Row[];
+}
+const { stageLabels, rows } = Astro.props;
+const { lang } = Astro.locals;
+---
+
+<section class="pw-board" aria-labelledby="pw-board-title" data-testid="pathway-board">
+  <h2 id="pw-board-title" class="pw-board-title">{t(lang, 'views.pw_board_title')}</h2>
+  <table class="pw-grid">
+    <caption class="visually-hidden">{t(lang, 'views.pw_board_caption')}</caption>
+    <thead>
+      <tr>
+        <td></td>
+        {stageLabels.map((l) => <th scope="col" class="pw-stage-head">{l}</th>)}
+      </tr>
+    </thead>
+    <tbody>
+      {
+        rows.map((row) => (
+          <tr data-board-reform={row.reformId}>
+            <th scope="row" class="pw-row-head">
+              <ReformChip reformId={row.reformId} label={row.reformId} />
+              <span class="pw-row-position">{row.position}</span>
+              <span class="pw-row-track" aria-hidden="true">
+                <StageTrack stages={row.cells.map((c) => ({ code: c.code, label: c.label, state: c.state === 'done' ? 'done' : c.state === 'todo' ? 'todo' : 'current' }))} label="" />
+              </span>
+            </th>
+            {row.cells.map((c, i) => (
+              <td
+                class:list={['pw-cell', { 'in-on': i > 0 && reached(c.state), 'out-on': i < row.cells.length - 1 && reached(row.cells[i + 1]!.state), first: i === 0, last: i === row.cells.length - 1 }]}
+                data-stage={c.code}
+                data-state={c.state}
+              >
+                <a class={`pw-dot pw-dot-${c.state}`} href={c.href}>
+                  <span class="visually-hidden">
+                    {t(lang, 'views.pw_cell', { reform: row.reformId, stage: c.label, status: c.statusLabel })}
+                    {c.escalation && <>. {t(lang, 'views.pw_escalation_flag')}</>}
+                  </span>
+                </a>
+                {c.escalation && (
+                  <span class="pw-flag" aria-hidden="true">
+                    <Icon name="warning" />
+                  </span>
+                )}
+              </td>
+            ))}
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+  <p class="pw-legend">
+    <span class="visually-hidden">{t(lang, 'views.pw_legend')}:</span>
+    <span><span class="pw-key pw-dot-done" aria-hidden="true"></span>{t(lang, 'views.pw_key_done')}</span>
+    <span><span class="pw-key pw-dot-current" aria-hidden="true"></span>{t(lang, 'views.pw_key_current')}</span>
+    <span><span class="pw-key pw-dot-todo" aria-hidden="true"></span>{t(lang, 'views.pw_key_todo')}</span>
+    <span><span class="pw-key-flag" aria-hidden="true"><Icon name="warning" /></span>{t(lang, 'views.pw_escalation_flag')}</span>
+  </p>
+</section>
+
+<style>
+  .pw-board {
+    padding: var(--space-4) var(--space-6) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .pw-board-title {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-md);
+    font-weight: var(--weight-bold);
+    color: var(--color-text-muted);
+  }
+  .pw-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  .pw-grid thead td {
+    width: 7.5rem;
+  }
+  .pw-stage-head {
+    padding: 0 var(--space-1) var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+    text-align: center;
+    vertical-align: bottom;
+    line-height: 1.3;
+    hyphens: auto;
+  }
+  .pw-row-head {
+    padding: var(--space-2) var(--space-2) var(--space-2) 0;
+    text-align: left;
+    font-weight: var(--weight-normal);
+  }
+  .pw-row-position,
+  .pw-row-track {
+    display: none;
+  }
+  .pw-cell {
+    position: relative;
+    height: 2.75rem;
+    text-align: center;
+  }
+  /* The line between dots: each cell draws its left and right halves, green where reached. */
+  .pw-cell::before,
+  .pw-cell::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: var(--color-border);
+  }
+  .pw-cell::before {
+    left: 0;
+    right: 50%;
+  }
+  .pw-cell::after {
+    left: 50%;
+    right: 0;
+  }
+  .pw-cell.first::before,
+  .pw-cell.last::after {
+    display: none;
+  }
+  .pw-cell.in-on::before,
+  .pw-cell.out-on::after {
+    background: var(--color-primary);
+  }
+  .pw-dot,
+  .pw-key {
+    position: relative;
+    z-index: 1;
+    display: inline-block;
+    box-sizing: border-box;
+    width: 0.875rem;
+    height: 0.875rem;
+    border-radius: 50%;
+    vertical-align: middle;
+  }
+  .pw-dot {
+    transition: transform var(--motion);
+  }
+  .pw-dot:hover,
+  .pw-dot:focus-visible {
+    transform: scale(1.35);
+  }
+  .pw-dot-done {
+    background: var(--color-primary);
+  }
+  .pw-dot-current {
+    background: var(--color-surface);
+    border: 4px solid var(--color-primary);
+  }
+  .pw-dot-blocked {
+    background: var(--color-surface);
+    border: 4px solid var(--color-rag-red);
+  }
+  /* Not started: a hollow ring dark enough (3:1) to see against white. */
+  .pw-dot-todo {
+    background: var(--color-surface);
+    border: 1.5px solid var(--color-text-faint);
+  }
+  .pw-flag {
+    position: absolute;
+    top: 0.2rem;
+    left: calc(50% + 0.45rem);
+    z-index: 2;
+    width: 0.8rem;
+    height: 0.8rem;
+    color: var(--color-rag-amber);
+  }
+  .pw-flag :global(svg),
+  .pw-key-flag :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+  .pw-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-6);
+    margin: var(--space-3) 0 0;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .pw-legend > span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .pw-key {
+    width: 0.625rem;
+    height: 0.625rem;
+  }
+  .pw-key.pw-dot-current {
+    border-width: 3px;
+  }
+  .pw-key-flag {
+    display: inline-block;
+    width: 0.8rem;
+    height: 0.8rem;
+    color: var(--color-rag-amber);
+  }
+
+  /* On a phone: one row per reform, its place in words and the small track. */
+  @media (max-width: 767px) {
+    .pw-board {
+      padding: var(--space-4);
+    }
+    .pw-grid thead,
+    .pw-cell,
+    .pw-legend {
+      display: none;
+    }
+    .pw-grid,
+    .pw-grid tbody,
+    .pw-grid tr {
+      display: block;
+    }
+    .pw-row-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: var(--space-1) var(--space-3);
+      padding: var(--space-3) 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .pw-grid tr:last-child .pw-row-head {
+      border-bottom: 0;
+    }
+    .pw-row-position {
+      display: block;
+      font-size: var(--text-sm);
+      color: var(--color-text-muted);
+    }
+    .pw-row-track {
+      display: block;
+      grid-column: 1 / -1;
+    }
+  }
+</style>

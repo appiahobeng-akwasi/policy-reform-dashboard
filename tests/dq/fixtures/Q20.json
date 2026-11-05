@@ -1,0 +1,33 @@
+{
+  "rule": "Q20",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "reform_stage",
+        "op": "update",
+        "id": "PT-001",
+        "fields": {
+          "escalation_needed": true,
+          "escalation_to": "Steering Committee"
+        }
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "reform_stage",
+        "op": "update",
+        "id": "PT-001",
+        "fields": {
+          "escalation_needed": true
+        }
+      }
+    ],
+    "expect": {
+      "field": "escalation_to"
+    }
+  }
+}

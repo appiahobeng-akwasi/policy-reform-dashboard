@@ -1,0 +1,156 @@
+---
+// One account: edit, turn off or on, reset a lost authenticator app (super administrators only,
+// decision 45), and the account's change history from the audit log. Admins only.
+import AccessFields from '../../../components/AccessFields.astro';
+import Base from '../../../layouts/Base.astro';
+import { formatDate, formatDateTime, t, type MessageKey } from '../../../i18n';
+import { createAuthAdmin } from '../../../lib/auth';
+import { ADMIN_ROLES, getUser, readAccessForm, resetAuthenticator, setUserActive, updateUser, type AccessInput, type Problem } from '../../../lib/admin/users';
+import { asUser } from '../../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+const id = Astro.params['id'] ?? '';
+if (!user) return Astro.redirect(`/sign-in?next=${encodeURIComponent(`/admin/users/${id}`)}`, 303);
+if (!/^[0-9a-f-]{36}$/.test(id)) return new Response(null, { status: 404 });
+const allowed = ADMIN_ROLES.includes(user.role);
+const reforms = allowed ? await asUser(user.claims, async (db) => (await db.query<{ reform_id: string }>('select reform_id from reforms order by reform_id')).rows.map((r) => r.reform_id)) : [];
+
+let problems: Problem[] = [];
+let error: string | null = null;
+let edited: AccessInput | null = null;
+let done: 'saved' | 'off' | 'on' | 'reset' | null = null;
+if (allowed && Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('action');
+  if (action === 'save') {
+    const read = readAccessForm(form, reforms);
+    edited = read.input;
+    problems = read.problems;
+    if (problems.length === 0) {
+      const result = await updateUser(user.claims, id, read.input);
+      if (result.ok) done = 'saved';
+      else error = result.code;
+    }
+  } else if (action === 'off' || action === 'on') {
+    const result = await setUserActive(user.claims, id, action === 'on');
+    if (result.ok) done = action;
+    else error = result.code;
+  } else if (action === 'reset_mfa') {
+    const result = await resetAuthenticator(user.claims, id, createAuthAdmin());
+    if (result.ok) done = 'reset';
+    else error = result.code;
+  }
+  if (done) return Astro.redirect(`/admin/users/${id}?done=${done}`, 303);
+}
+
+const account = allowed ? await getUser(user.claims, id) : null;
+if (allowed && !account) return new Response(null, { status: 404 });
+const history = account
+  ? await asUser(user.claims, async (db) => {
+      const { rows } = await db.query<{ at: string; table_name: string; action: string; actor: string | null }>(
+        `select a.at::text, a.table_name, a.action, coalesce(p.full_name, u.email) as actor
+           from audit_log a left join app_users u on u.user_id = a.actor_user_id left join people p on p.person_id = u.person_id
+          where (a.table_name in ('app_users', 'user_reform_scope', 'authenticator_app') and a.record_id = $1)
+             or (a.table_name = 'people' and a.record_id = $2)
+          order by a.at desc, a.audit_id desc limit 20`,
+        [account.userId, account.personId],
+      );
+      return rows;
+    })
+  : [];
+const value: AccessInput | null = edited ?? (account ? { name: account.name, email: account.email, role: account.role, language: account.language, scope: account.scope } : null);
+const doneParam = Astro.url.searchParams.get('done');
+const added = Astro.url.searchParams.get('added') === '1';
+const self = account?.userId === user.userId;
+const mayChange = user.role === 'super_admin' || account?.role !== 'super_admin';
+---
+
+<Base title={account?.name ?? t(lang, 'admin.users_title')}>
+  <p><a href="/admin/users">{t(lang, 'admin.back_users')}</a></p>
+  {
+    !account || !value ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        <h1>{account.name}</h1>
+        <p>
+          {account.email} · {t(lang, `roles.${account.role}` as MessageKey)}
+          {!account.isActive && (
+            <>
+              {' '}
+              <span class="badge">{t(lang, 'admin.status_inactive')}</span>
+            </>
+          )}
+        </p>
+        {added && <p class="notice" role="status">{t(lang, 'admin.added_sign_in')}</p>}
+        {doneParam && ['saved', 'off', 'on', 'reset'].includes(doneParam) && (
+          <p class="notice" role="status" data-testid="admin-done">
+            {t(lang, `admin.done_${doneParam}` as MessageKey)}
+          </p>
+        )}
+        {error && (
+          <p class="error" role="alert" data-testid="admin-error">
+            {t(lang, `admin.error_${error}` as MessageKey)}
+          </p>
+        )}
+        {!mayChange && <p class="notice">{t(lang, 'admin.super_only')}</p>}
+
+        <form method="post" class="stack narrow">
+          <input type="hidden" name="action" value="save" />
+          <AccessFields value={value} reforms={reforms} canGrantSuper={user.role === 'super_admin'} problems={problems} />
+          <button class="button" type="submit" disabled={!mayChange}>{t(lang, 'admin.save')}</button>
+        </form>
+
+        <section class="stack narrow">
+          <h2>{t(lang, 'admin.access_title')}</h2>
+          {self ? (
+            <p class="muted">{t(lang, 'admin.self_note')}</p>
+          ) : (
+            <form method="post">
+              <input type="hidden" name="action" value={account.isActive ? 'off' : 'on'} />
+              <p>{account.isActive ? t(lang, 'admin.turn_off_hint') : t(lang, 'admin.turn_on_hint')}</p>
+              <button class="button button-quiet" type="submit" disabled={!mayChange}>
+                {account.isActive ? t(lang, 'admin.turn_off') : t(lang, 'admin.turn_on')}
+              </button>
+            </form>
+          )}
+          {user.role === 'super_admin' && !self && (
+            <form method="post">
+              <input type="hidden" name="action" value="reset_mfa" />
+              <p>{t(lang, 'admin.reset_hint')}</p>
+              <button class="button button-quiet" type="submit">{t(lang, 'admin.reset')}</button>
+            </form>
+          )}
+          <p class="muted">{t(lang, 'admin.last_sign_in')}: {account.lastSignInAt ? formatDate(account.lastSignInAt, lang) : t(lang, 'admin.never')}</p>
+        </section>
+
+        <section>
+          <h2>{t(lang, 'admin.history_title')}</h2>
+          {history.length === 0 ? (
+            <p>{t(lang, 'admin.history_none')}</p>
+          ) : (
+            <ul class="history" data-testid="history">
+              {history.map((h) => (
+                <li>
+                  {formatDateTime(h.at, lang)}: {t(lang, `admin.history_${h.table_name}` as MessageKey)} ({t(lang, `admin.action_${h.action}` as MessageKey)})
+                  {' · '}
+                  {h.actor ?? t(lang, 'admin.by_system')}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </>
+    )
+  }
+</Base>
+
+<style>
+  section {
+    margin-top: var(--space-8);
+  }
+  .history {
+    padding-left: var(--space-4);
+    font-size: var(--text-sm);
+  }
+</style>

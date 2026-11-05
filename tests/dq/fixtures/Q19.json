@@ -1,0 +1,47 @@
+{
+  "rule": "Q19",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "evidence_item",
+        "op": "create",
+        "fields": {
+          "title": "Minutes of the land working group",
+          "evidence_type": "meeting_minutes",
+          "source_institution": "Ministry of Agriculture",
+          "evidence_date": "2026-11-05"
+        },
+        "links": [
+          {
+            "object_type": "milestone",
+            "object_id": "MS-001"
+          }
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "evidence_item",
+        "op": "create",
+        "fields": {
+          "title": "Minutes of the land working group",
+          "evidence_type": "meeting_minutes",
+          "evidence_date": "2026-11-05"
+        },
+        "links": [
+          {
+            "object_type": "milestone",
+            "object_id": "MS-001"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "field": "source_institution"
+    }
+  }
+}

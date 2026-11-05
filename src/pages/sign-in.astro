@@ -1,0 +1,65 @@
+---
+import Icon from '../components/Icon.astro';
+import Base from '../layouts/Base.astro';
+import { t } from '../i18n';
+import { rememberNext } from '../lib/auth/next-cookie';
+import { safeReturnPath } from '../lib/http';
+import { isAllowedEmail } from '../lib/server-db';
+import { allow, LIMITS } from '../lib/security/rate-limit';
+
+const { lang, user, auth } = Astro.locals;
+const next = safeReturnPath(Astro.url.searchParams.get('next'));
+if (user) return Astro.redirect(next, 303);
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+let error: 'email_invalid' | 'send_failed' | 'too_many' | null = null;
+let email = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  email = String(form.get('email') ?? '').trim();
+  if (!EMAIL.test(email) || email.length > 254) {
+    error = 'email_invalid';
+  } else if (!(await allow(LIMITS.signInEmail, email.toLowerCase()))) {
+    // The same for any address, listed or not, so it reveals nothing about who is registered.
+    error = 'too_many';
+  } else {
+    // Unlisted emails get the same answer as listed ones, so the form cannot be used to
+    // find out who is registered. Only listed emails are sent a link.
+    const sent = (await isAllowedEmail(email)) ? await auth.sendSignInLink(email) : true;
+    if (sent) {
+      rememberNext(Astro.cookies, form.get('next'));
+      Astro.cookies.set('sign_in_sent_to', email, { path: '/auth/sent', maxAge: 600, httpOnly: true, sameSite: 'lax', secure: import.meta.env.PROD });
+      return Astro.redirect('/auth/sent', 303);
+    }
+    error = 'send_failed';
+  }
+}
+---
+
+<Base title={t(lang, 'auth.sign_in_title')} variant="auth">
+  <div class="auth-form">
+    <p class="auth-eyebrow">{t(lang, 'app.name')}</p>
+    <h1>{t(lang, 'auth.sign_in_title')}</h1>
+    <p class="auth-lead">{t(lang, 'auth.sign_in_intro')}</p>
+    {
+      error && (
+        <p class="error" role="alert">
+          {t(lang, error === 'email_invalid' ? 'auth.email_invalid' : error === 'too_many' ? 'auth.too_many' : 'auth.send_failed')}
+        </p>
+      )
+    }
+    <form method="post" class="stack">
+      <input type="hidden" name="next" value={next} />
+      <div>
+        <label for="email">{t(lang, 'auth.email_label')}</label>
+        <input id="email" name="email" type="email" autocomplete="email" required value={email} />
+      </div>
+      <button class="button" type="submit">{t(lang, 'auth.send_link')}</button>
+    </form>
+    <p class="auth-note">
+      <Icon name="quality" />
+      <span>{t(lang, 'auth.sign_in_note')}</span>
+    </p>
+  </div>
+</Base>

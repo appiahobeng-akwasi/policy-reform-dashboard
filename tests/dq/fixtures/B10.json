@@ -1,0 +1,47 @@
+{
+  "rule": "B10",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "workstream",
+        "op": "create",
+        "fields": {
+          "reform_id": "RA1",
+          "name": "Land registry reform",
+          "workstream_type": "policy",
+          "owner_person_id": "11111111-1111-4111-8111-111111111111",
+          "start_date": "2026-11-01",
+          "due_date": "2027-03-31",
+          "status": "on_track",
+          "progress_pct": 50,
+          "next_action": "Hold the first working group"
+        }
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "workstream",
+        "op": "create",
+        "fields": {
+          "reform_id": "RA1",
+          "name": "Land registry reform",
+          "workstream_type": "policy",
+          "owner_person_id": "11111111-1111-4111-8111-111111111111",
+          "start_date": "2026-11-01",
+          "due_date": "2027-03-31",
+          "status": "on_track",
+          "progress_pct": 150,
+          "next_action": "Hold the first working group"
+        }
+      }
+    ],
+    "expect": {
+      "field": "progress_pct",
+      "value": "150"
+    }
+  }
+}

@@ -1,0 +1,92 @@
+---
+// A summary number at the top of a page (docs/08 section 3). As a link it filters the table
+// below; the selected one is marked.
+interface Props {
+  label: string;
+  value: number | string;
+  context?: string | undefined;
+  href?: string;
+  selected?: boolean;
+  tone?: 'red' | 'amber' | 'default';
+  /** A small coloured dot before the label, for a level such as high, medium or low. */
+  dot?: 'red' | 'amber' | 'green' | undefined;
+  testId?: string;
+}
+const { label, value, context, href, selected = false, tone = 'default', dot, testId } = Astro.props;
+const Tag = href ? 'a' : 'div';
+---
+
+<li class="stat-item">
+  <Tag class:list={['stat', `tone-${tone}`, { selected }]} href={href} aria-current={selected ? 'true' : undefined} data-testid={testId}>
+    <span class="stat-label">
+      {dot && <span class={`stat-dot stat-dot-${dot}`} aria-hidden="true" />}
+      {label}
+    </span>
+    <span class="stat-value">{value}</span>
+    {context && <span class="stat-context">{context}</span>}
+  </Tag>
+</li>
+
+<style>
+  .stat-item {
+    list-style: none;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    height: 100%;
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-surface) var(--gradient-card);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  a.stat:hover {
+    border-color: var(--color-border);
+  }
+  .stat.selected {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft) var(--gradient-accent-soft);
+  }
+  .stat-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .stat-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+  }
+  .stat-dot-red {
+    background: var(--gradient-coral);
+  }
+  .stat-dot-amber {
+    background: var(--gradient-sun);
+  }
+  .stat-dot-green {
+    background: var(--gradient-leaf);
+  }
+  .stat-value {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-heavy);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+  .tone-red .stat-value {
+    color: var(--color-rag-red);
+  }
+  .tone-amber .stat-value {
+    color: var(--color-rag-amber);
+  }
+  .stat-context {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+</style>

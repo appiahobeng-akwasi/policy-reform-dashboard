@@ -1,0 +1,197 @@
+---
+// Activities and milestones in one quiet table (decision 89): ID, item, owner, due date with how
+// late it is, and the rating pill. The caller orders the rows (overdue first); the first five
+// show and the rest sit behind "Show more" (a <details>, no JavaScript). On a phone each row
+// stacks into two lines.
+import { t } from '../i18n';
+import { fold } from '../lib/pathway';
+import DeliveryTableRow from './DeliveryTableRow.astro';
+
+export interface DeliveryRow {
+  object_type: string;
+  object_id: string;
+  name: string;
+  due_date: string | null;
+  rag: string;
+  days_overdue: number;
+  owner_name: string | null;
+  is_sample: boolean;
+}
+interface Props {
+  rows: DeliveryRow[];
+  ragLabel: (rag: string) => string;
+  /** Show "Activity" or "Milestone" above each name (in a deliverable, where both appear). */
+  showType?: boolean;
+}
+const { rows, ragLabel, showType = false } = Astro.props;
+const { lang } = Astro.locals;
+const { shown, more } = fold(rows);
+const heads = [
+  ['dt-id', 'views.pw_col_id'],
+  ['', 'views.pw_col_item'],
+  ['dt-owner', 'views.pw_col_owner'],
+  ['dt-due', 'views.pw_col_due'],
+  ['dt-rating', 'views.pw_col_rating'],
+] as const;
+---
+
+{
+  shown.length > 0 && (
+    <table class="dt">
+      <thead class="dt-head">
+        <tr>{heads.map(([cls, key]) => <th scope="col" class={cls || undefined}>{t(lang, key)}</th>)}</tr>
+      </thead>
+      <tbody>
+        {shown.map((row) => <DeliveryTableRow row={row} ragLabel={ragLabel} showType={showType} />)}
+      </tbody>
+    </table>
+  )
+}
+{
+  more.length > 0 && (
+    <details class="dt-more">
+      <summary>{t(lang, 'views.pw_show_more', { n: more.length })}</summary>
+      <table class="dt">
+        <thead class="dt-head dt-head-hidden">
+          <tr>{heads.map(([cls, key]) => <th scope="col" class={cls || undefined}>{t(lang, key)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {more.map((row) => <DeliveryTableRow row={row} ragLabel={ragLabel} showType={showType} />)}
+        </tbody>
+      </table>
+    </details>
+  )
+}
+
+<style>
+  .dt {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: var(--text-md);
+  }
+  .dt :global(th),
+  .dt :global(td) {
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+    vertical-align: top;
+  }
+  .dt-head th {
+    padding-top: 0;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+  }
+  /* The second table's headers are for screen readers; the first table's line up above it. */
+  .dt-head-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .dt :global(tbody tr:hover) {
+    background: var(--color-surface-hover);
+  }
+  .dt :global(.dt-id) {
+    width: 6.5rem;
+    padding-left: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .dt :global(td.dt-id) {
+    padding-top: 0.7rem;
+  }
+  .dt :global(.dt-name a) {
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .dt :global(.dt-name a:hover),
+  .dt :global(.dt-name a:focus-visible) {
+    text-decoration: underline;
+  }
+  .dt :global(.dt-type) {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .dt :global(.dt-owner),
+  .dt :global(.dt-due) {
+    width: 9rem;
+  }
+  .dt :global(.dt-rating) {
+    width: 5.5rem;
+    padding-right: 0;
+    text-align: right;
+  }
+  .dt :global(.dt-none) {
+    color: var(--color-text-muted);
+  }
+  .dt :global(.dt-late) {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-rag-red);
+  }
+  .dt-more summary {
+    width: max-content;
+    margin-top: var(--space-2);
+    padding: var(--space-1) 0;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-link);
+    cursor: pointer;
+  }
+
+  /* On a phone: the item and its rating on top, then ID, owner and due date on one line. */
+  @media (max-width: 767px) {
+    .dt-head {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+    .dt,
+    .dt tbody {
+      display: block;
+    }
+    .dt :global(tbody tr) {
+      display: grid;
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      gap: var(--space-1) var(--space-3);
+      padding: var(--space-3) 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .dt :global(td) {
+      width: auto;
+      padding: 0;
+      border: 0;
+    }
+    .dt :global(.dt-name) {
+      grid-column: 1 / 4;
+      grid-row: 1;
+    }
+    .dt :global(.dt-rating) {
+      grid-column: 4;
+      grid-row: 1;
+      width: auto;
+    }
+    .dt :global(td.dt-id),
+    .dt :global(.dt-owner),
+    .dt :global(.dt-due) {
+      grid-row: 2;
+      width: auto;
+      padding: 0;
+      font-size: var(--text-xs);
+      color: var(--color-text-muted);
+    }
+    .dt :global(.dt-late) {
+      display: inline;
+      margin-left: var(--space-1);
+    }
+  }
+</style>

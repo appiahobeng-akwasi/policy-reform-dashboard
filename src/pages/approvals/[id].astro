@@ -1,0 +1,733 @@
+---
+// One submission in the approvals inbox (spec 01 section 7.2, decision 79): the waiting list on
+// the left; in the middle the item, what the checks found (decision 34) and the current and
+// proposed values in plain words; the evidence on the right, previewed only when asked (decision
+// 35, 82); and a fixed bar to return or approve, then move to the next one. Approvers cannot
+// edit: they approve or return (four-eyes). The database decides who may approve (decision 14).
+import ApprovalList from '../../components/ApprovalList.astro';
+import Icon from '../../components/Icon.astro';
+import ObjectIcon from '../../components/ObjectIcon.astro';
+import ReformChip from '../../components/ReformChip.astro';
+import Toast from '../../components/Toast.astro';
+import Base from '../../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../../i18n';
+import { approve, loadQueue, loadReview, returnForChanges, type Change } from '../../lib/approvals';
+import { ENTITY_SPECS } from '../../lib/gate/entities';
+import { withoutRowPrefix } from '../../lib/gate/messages';
+
+const PAGE_SIZE = 50;
+const { lang, user } = Astro.locals;
+const id = Astro.params['id'] ?? '';
+if (!user) return Astro.redirect(`/sign-in?next=${encodeURIComponent(`/approvals/${id}`)}`, 303);
+if (!/^[0-9a-f-]{36}$/.test(id)) return new Response(null, { status: 404 });
+
+// The list on the left, and the updates before and after this one (J and K move between them).
+const queue = await loadQueue(user);
+const at = queue.findIndex((q) => q.submissionId === id);
+const prev = at > 0 ? queue[at - 1] : undefined;
+const next = at >= 0 ? queue[at + 1] : undefined;
+// After a decision, go straight to the next update waiting, or back to the list.
+const after = next ?? prev;
+
+let error: string | null = null;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('action');
+  const note = String(form.get('note') ?? '').trim();
+  const result =
+    action === 'return'
+      ? note
+        ? await returnForChanges(user, id, note)
+        : ({ ok: false, code: 'W06' } as const)
+      : await approve(user, id, note || null, form.get('break_glass') === 'on');
+  const done = action === 'return' ? 'returned' : 'approved';
+  if (result.ok) return Astro.redirect(after ? `/approvals/${after.submissionId}?done=${done}` : `/approvals?done=${done}`, 303);
+  error = result.code;
+}
+
+const page = Math.max(1, Number.parseInt(Astro.url.searchParams.get('page') ?? '1', 10) || 1);
+const review = await loadReview(user, id, page, PAGE_SIZE);
+const pages = review ? Math.max(1, Math.ceil(review.totalRows / PAGE_SIZE)) : 1;
+
+const show = (entity: string, change: Change, which: 'current' | 'proposed'): string => {
+  const value = change[which];
+  if (value === null || value === undefined || value === '') return t(lang, 'approvals.empty_value');
+  if (typeof value === 'boolean') return t(lang, value ? 'approvals.yes' : 'approvals.no');
+  if (/person_id$/.test(change.field) && typeof value === 'string') return review?.people[value] ?? value;
+  const list = ENTITY_SPECS[entity]?.controlled[change.field];
+  const label = list ? review?.labels[`${list}:${String(value)}`] : undefined;
+  if (label) return lang === 'fr' ? label.fr : label.en;
+  if (ENTITY_SPECS[entity]?.dates.includes(change.field) && typeof value === 'string') return formatDate(value, lang);
+  return String(value);
+};
+const fieldLabel = (field: string) => {
+  const key = `fields.${field}` as MessageKey;
+  try {
+    return t(lang, key);
+  } catch {
+    return field;
+  }
+};
+const done = Astro.url.searchParams.get('done');
+const preview = Astro.url.searchParams.get('preview');
+const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
+const errors = review?.quality.points.filter((p) => p.severity === 'error') ?? [];
+const checks = !review || review.quality.score === null ? null : errors.length > 0 ? 'fail' : review.quality.points.length > 0 ? 'points' : 'pass';
+// The item the update is about: its first delivery row (evidence rows ride along with it).
+const DELIVERY = ['workstream', 'deliverable', 'activity', 'milestone'];
+const first = review?.rows.find((r) => DELIVERY.includes(r.entity)) ?? review?.rows[0];
+const reformIds = queue[at]?.reformIds ?? [];
+const typeLabel = (entity: string) => {
+  if (entity === 'evidence_item') return t(lang, 'approvals.file_evidence');
+  try {
+    return t(lang, `items.type_${entity}` as MessageKey);
+  } catch {
+    return entity;
+  }
+};
+const title = !review
+  ? t(lang, 'approvals.review_title')
+  : review.route === 'bulk_upload'
+    ? t(lang, 'approvals.title_many', { n: review.totalRows })
+    : first?.isConfirmation
+      ? t(lang, 'approvals.title_confirmation', { item: `${typeLabel(first.entity)} ${first.id ?? ''}` })
+      : first
+        ? t(lang, first.op === 'create' ? 'approvals.title_new' : 'approvals.title_update', { item: `${typeLabel(first.entity)} ${first.id ?? ''}`.trim(), name: first.name ?? '' })
+        : t(lang, 'approvals.review_title');
+---
+
+<Base title={title}>
+  {done === 'approved' && <Toast message={t(lang, 'approvals.approved')} testId="done" />}
+  {done === 'returned' && <Toast message={t(lang, 'approvals.returned')} testId="done" />}
+  <div class="inbox">
+    <div class="list-pane">
+      <p class="back"><a href="/approvals"><Icon name="arrow_left" /> {t(lang, 'approvals.all_updates')}</a></p>
+      {queue.length > 0 && <ApprovalList queue={queue} selected={id} />}
+    </div>
+
+    <div class="detail-pane">
+      <p class="back narrow"><a href="/approvals"><Icon name="arrow_left" /> {t(lang, 'approvals.all_updates')}</a></p>
+      {
+        !review ? (
+          <p class="notice">{t(lang, 'approvals.not_found')}</p>
+        ) : (
+          <>
+            <header class="detail-head">
+              <ObjectIcon kind={first?.isConfirmation ? 'confirmation' : review.route === 'bulk_upload' ? 'upload' : (first?.entity ?? 'milestone')} />
+              <h1>{title}</h1>
+              <p class="meta-line">
+                {reformIds.length > 0 ? reformIds.map((r) => <ReformChip reformId={r} label={r} />) : <ReformChip reformId={null} label={t(lang, 'items.programme_wide')} />}
+                <span>
+                  {review.onBehalfOf
+                    ? t(lang, 'approvals.sent_by_for', { by: review.submittedBy, for: review.onBehalfOf, date: formatDate(review.createdAt, lang) })
+                    : t(lang, 'approvals.sent_by', { by: review.submittedBy, date: formatDate(review.createdAt, lang) })}
+                  {' · '}
+                  {t(lang, `approvals.route_${review.route}` as MessageKey)}
+                </span>
+              </p>
+              {review.channel && review.receivedOn && (
+                <p class="muted">{t(lang, 'approvals.received', { channel: t(lang, `onbehalf.channel_${review.channel}` as MessageKey), date: formatDate(review.receivedOn, lang) })}</p>
+              )}
+              {review.note && <p class="sender-note">{t(lang, 'approvals.note', { note: review.note })}</p>}
+            </header>
+
+            {error && (
+              <p class="error" role="alert" data-testid="approval-error">
+                {t(lang, `approvals.error_${error}` as MessageKey)}
+              </p>
+            )}
+
+            {checks && (
+              <section class={`checks checks-${checks}`} aria-labelledby="checks-title">
+                <h2 id="checks-title">
+                  <Icon name={checks === 'fail' ? 'warning' : 'check_circle'} />
+                  {t(lang, `approvals.checks_${checks}` as MessageKey)}
+                </h2>
+                <p data-testid="quality">{t(lang, 'approvals.score', { score: review.quality.score ?? 0, threshold: review.quality.threshold ?? 80 })}</p>
+                {review.quality.points.length > 0 && (
+                  <details open={checks === 'fail'}>
+                    <summary>{t(lang, 'approvals.points')}</summary>
+                    <ul>
+                      {review.quality.points.map((p) => (
+                        <li class={p.severity === 'error' ? 'hint-error' : 'hint-warning'}>
+                          {withoutRowPrefix(lang === 'fr' ? p.messageFr : p.messageEn)}{' '}
+                          <a class="rule-id" href={`/rules?open=${encodeURIComponent(p.ruleId)}`} title={t(lang, 'rules_ref.rule', { id: p.ruleId })}>
+                            {p.ruleId}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                <p class="recheck">{t(lang, 'approvals.recheck')}</p>
+              </section>
+            )}
+
+            <h2 class="details-title">{t(lang, 'approvals.details')}</h2>
+            {review.rows.map((row) => (
+              <section class="row card" data-row={row.index}>
+                {review.rows.length > 1 && (
+                  <h3>
+                    {typeLabel(row.entity)} {row.id ?? ''}
+                    {row.name && <>: {row.name}</>}
+                  </h3>
+                )}
+                {(row.op === 'create' || row.sheet || row.reportedBy) && (
+                  <p class="meta">
+                    {row.op === 'create' && <span class="pill pill-accent">{t(lang, 'approvals.new_item')}</span>}
+                    {row.sheet && <> {t(lang, 'approvals.row_from', { sheet: row.sheet, row: row.sheetRow ?? '' })}</>}
+                    {row.reportedBy && (
+                      <>
+                        {' · '}
+                        {t(lang, 'fields.on_behalf_of_person_id')}: {review.people[row.reportedBy] ?? row.reportedBy}
+                      </>
+                    )}
+                  </p>
+                )}
+                {row.isConfirmation ? (
+                  <p class="confirms" data-testid="confirms">
+                    <ObjectIcon kind="confirmation" size="sm" /> {t(lang, 'approvals.confirms')}
+                  </p>
+                ) : (
+                  row.changes.length > 0 && (
+                    <table class="diff">
+                      <thead>
+                        <tr>
+                          <th scope="col">{t(lang, 'approvals.field')}</th>
+                          {row.op === 'update' && <th scope="col">{t(lang, 'approvals.current')}</th>}
+                          <th scope="col">{t(lang, 'approvals.proposed')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {row.changes.map((change) => (
+                          <tr data-field={change.field}>
+                            <th scope="row">{fieldLabel(change.field)}</th>
+                            {row.op === 'update' && <td class="current">{show(row.entity, change, 'current')}</td>}
+                            <td class="proposed">{show(row.entity, change, 'proposed')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )
+                )}
+                {row.links.length > 0 && <p class="extra">{t(lang, 'approvals.adds_links', { items: row.links.join(', ') })}</p>}
+                {row.evidenceIds.length > 0 && <p class="extra">{t(lang, 'approvals.adds_evidence', { items: row.evidenceIds.join(', ') })}</p>}
+                {row.dependsOn.length > 0 && <p class="extra">{t(lang, 'approvals.adds_depends', { items: row.dependsOn.join(', ') })}</p>}
+              </section>
+            ))}
+
+            {pages > 1 && (
+              <nav class="pager">
+                {page > 1 && <a href={`/approvals/${id}?page=${page - 1}`}>{t(lang, 'items.previous')}</a>}
+                <span>{t(lang, 'items.page', { n: page })}</span>
+                {page < pages && <a href={`/approvals/${id}?page=${page + 1}`}>{t(lang, 'items.next')}</a>}
+              </nav>
+            )}
+
+            <div class="decide-bar" data-testid="decide-bar">
+              <nav class="step" aria-label={t(lang, 'approvals.step_label')}>
+                {prev ? (
+                  <a class="btn btn-secondary step-button" href={`/approvals/${prev.submissionId}`} data-key-prev aria-label={`${t(lang, 'approvals.prev')} (K)`} title={`${t(lang, 'approvals.prev')} (K)`}>
+                    <Icon name="chevron_up" />
+                  </a>
+                ) : (
+                  <span class="btn btn-secondary step-button disabled" aria-hidden="true">
+                    <Icon name="chevron_up" />
+                  </span>
+                )}
+                {next ? (
+                  <a class="btn btn-secondary step-button" href={`/approvals/${next.submissionId}`} data-key-next aria-label={`${t(lang, 'approvals.next')} (J)`} title={`${t(lang, 'approvals.next')} (J)`}>
+                    <Icon name="chevron_down" />
+                  </a>
+                ) : (
+                  <span class="btn btn-secondary step-button disabled" aria-hidden="true">
+                    <Icon name="chevron_down" />
+                  </span>
+                )}
+                <span class="position">{at >= 0 ? t(lang, 'approvals.position', { n: at + 1, total: queue.length }) : ''}</span>
+              </nav>
+              {(review.canApprove || review.canBreakGlass) ? (
+                <div class="actions">
+                  {review.canApprove && (
+                    <details class="return" data-menu>
+                      <summary class="btn btn-return">
+                        <Icon name="returned" /> {t(lang, 'approvals.return')}
+                      </summary>
+                      <form method="post" class="stack decide-panel">
+                        <input type="hidden" name="action" value="return" />
+                        <div>
+                          <label for="return-note">{t(lang, 'approvals.return_note')}</label>
+                          <textarea id="return-note" name="note" rows="3" maxlength="2000" required></textarea>
+                        </div>
+                        <button class="btn btn-return-send" type="submit">{t(lang, 'approvals.return_send')}</button>
+                      </form>
+                    </details>
+                  )}
+                  <form method="post" class="approve" data-approve>
+                    <input type="hidden" name="action" value="approve" />
+                    <details class="approve-extra">
+                      <summary>{review.canBreakGlass ? t(lang, 'approvals.break_glass_options') : t(lang, 'approvals.add_note')}</summary>
+                      <div class="stack decide-panel">
+                        {review.canBreakGlass && (
+                          <label class="inline">
+                            <input type="checkbox" name="break_glass" />
+                            {t(lang, 'approvals.break_glass')}
+                          </label>
+                        )}
+                        <div>
+                          <label for="approve-note">{review.canBreakGlass ? t(lang, 'approvals.break_glass_reason') : t(lang, 'approvals.approve_note')}</label>
+                          <textarea id="approve-note" name="note" rows="2" maxlength="2000"></textarea>
+                        </div>
+                      </div>
+                    </details>
+                    <button class="button approve-button" type="submit">
+                      <Icon name="approvals" /> {t(lang, 'approvals.approve')} <kbd class="wide-only" aria-hidden="true">{t(lang, 'help.key_enter_keys')}</kbd>
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <p class="muted">{t(lang, 'approvals.cannot_decide')}</p>
+              )}
+            </div>
+          </>
+        )
+      }
+    </div>
+
+    {
+      review && (
+        <aside class="evidence-pane" aria-labelledby="evidence-title">
+          <h2 id="evidence-title">{t(lang, 'approvals.files')}</h2>
+          {review.files.length === 0 ? (
+            <p class="muted">{t(lang, 'approvals.no_files')}</p>
+          ) : (
+            <ul class="files">
+              {review.files.map((f) => {
+                const href = `/approvals/${id}/file?path=${encodeURIComponent(f.path)}`;
+                const image = IMAGE.test(f.path);
+                return (
+                  <li class="card file">
+                    <p class="file-head">
+                      <ObjectIcon kind="evidence" size="sm" />
+                      <span>
+                        <a href={href}>{f.label}</a>
+                        <span class="sub">{t(lang, `approvals.file_${f.kind}` as MessageKey)}</span>
+                      </span>
+                    </p>
+                    {preview === f.path && image ? (
+                      <img class="preview" src={`${href}&inline=1`} alt={t(lang, 'approvals.preview_alt', { name: f.label })} loading="lazy" />
+                    ) : image ? (
+                      <a class="btn btn-secondary preview-link" href={`/approvals/${id}?preview=${encodeURIComponent(f.path)}`}>
+                        {t(lang, 'approvals.preview')}
+                      </a>
+                    ) : (
+                      <a class="btn btn-secondary preview-link" href={href} target="_blank" rel="noopener">
+                        <Icon name="external" /> {t(lang, 'approvals.open_file')}
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <p class="muted small">{t(lang, 'approvals.preview_note')}</p>
+        </aside>
+      )
+    }
+  </div>
+</Base>
+
+<style>
+  .inbox {
+    display: grid;
+    grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr) minmax(14rem, 18rem);
+    gap: var(--space-6);
+    align-items: start;
+  }
+  .list-pane,
+  .evidence-pane {
+    position: sticky;
+    top: 5rem;
+    max-height: calc(100vh - 6rem);
+    overflow-y: auto;
+  }
+  .back {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
+  }
+  .back a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .back.narrow {
+    display: none;
+  }
+  .detail-pane {
+    min-width: 0;
+  }
+  .detail-head h1 {
+    overflow-wrap: anywhere;
+    margin: var(--space-3) 0 var(--space-2);
+    font-size: var(--text-2xl);
+    letter-spacing: -0.02em;
+  }
+  .meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .sender-note {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .checks {
+    margin: var(--space-6) 0;
+    padding: var(--space-4) var(--space-6);
+    border-radius: var(--radius-md);
+    border: 2px solid;
+    background: var(--color-surface);
+  }
+  .checks h2 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-lg);
+  }
+  .checks-pass {
+    border-color: #9fd8bf;
+  }
+  .checks-pass h2 {
+    color: var(--color-rag-green);
+  }
+  .checks-points {
+    border-color: #f3d79b;
+  }
+  .checks-points h2 {
+    color: var(--color-rag-amber);
+  }
+  .checks-fail {
+    border-color: #f3b4aa;
+  }
+  .checks-fail h2 {
+    color: var(--color-rag-red);
+  }
+  .checks ul {
+    margin: var(--space-2) 0 0;
+    padding-left: var(--space-4);
+  }
+  .rule-id {
+    margin-left: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .recheck {
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .details-title {
+    margin-top: var(--space-6);
+    font-size: var(--text-lg);
+  }
+  .row {
+    margin-bottom: var(--space-3);
+  }
+  .row h3 {
+    margin: 0 0 var(--space-2);
+  }
+  .meta {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .confirms {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0;
+  }
+  .diff {
+    border-collapse: collapse;
+    width: 100%;
+    table-layout: fixed;
+    font-size: var(--text-md);
+  }
+  /* Long values (file references, links) wrap instead of widening the page. */
+  .diff th,
+  .diff td {
+    overflow-wrap: anywhere;
+  }
+  .diff th,
+  .diff td {
+    text-align: left;
+    padding: var(--space-3) var(--space-2);
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+  }
+  .diff tbody tr:last-child > * {
+    border-bottom: 0;
+  }
+  .diff thead th {
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+  }
+  .diff tbody th {
+    width: 32%;
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+  }
+  .diff .current {
+    color: var(--color-text-muted);
+    text-decoration: line-through;
+    text-decoration-color: rgb(94 104 98 / 50%);
+  }
+  .diff .proposed {
+    font-weight: var(--weight-bold);
+  }
+  .extra {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-sm);
+  }
+  .decide-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-top: var(--space-6);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    background: rgb(255 255 255 / 95%);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-float);
+  }
+  .step {
+    display: flex;
+    gap: var(--space-1);
+  }
+  .disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  kbd {
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    padding: 0 0.3rem;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    opacity: 0.7;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  /* Menus in the bar sit in line with the buttons; their panels open upwards. */
+  .return,
+  .approve-extra {
+    position: relative;
+    display: inline-block;
+  }
+  .approve {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .step {
+    align-items: center;
+  }
+  .step-button {
+    width: var(--control-height);
+    padding: 0;
+  }
+  .position {
+    margin-left: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .wide-only {
+    display: none;
+  }
+  @media (min-width: 1500px) {
+    .wide-only {
+      display: inline;
+    }
+  }
+  summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .btn-return,
+  .btn-return-send {
+    background: var(--color-surface);
+    color: var(--color-rag-red);
+    border-color: #f3b4aa;
+    box-shadow: none;
+  }
+  .btn-return:hover,
+  .btn-return-send:hover {
+    background: var(--color-rag-red-bg);
+    filter: none;
+  }
+  .approve-extra summary {
+    font-size: var(--text-sm);
+    color: var(--color-link);
+    text-decoration: underline;
+  }
+  details:not([open]) > .decide-panel {
+    display: none;
+  }
+  .decide-panel {
+    position: absolute;
+    bottom: calc(100% + var(--space-3));
+    right: 0;
+    width: min(24rem, 80vw);
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-float);
+  }
+  .return .decide-panel {
+    left: 0;
+    right: auto;
+  }
+  .approve-button {
+    min-height: 2.75rem;
+    padding: 0 var(--space-6);
+  }
+  .inline {
+    display: flex;
+    gap: var(--space-2);
+    font-weight: var(--weight-normal);
+  }
+  .pager {
+    display: flex;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+  .evidence-pane h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-lg);
+  }
+  .files {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-3);
+  }
+  .file {
+    padding: var(--space-3);
+  }
+  .file-head {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-2);
+    overflow-wrap: anywhere;
+  }
+  .sub {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .preview {
+    display: block;
+    width: 100%;
+    border-radius: var(--radius-sm);
+  }
+  .preview-link {
+    width: 100%;
+  }
+  .small {
+    font-size: var(--text-xs);
+  }
+
+  /* Laptops: narrower side panes, so the decision bar stays on one line. */
+  @media (max-width: 1499px) {
+    .inbox {
+      grid-template-columns: minmax(13rem, 15rem) minmax(0, 1fr) minmax(12rem, 15rem);
+      gap: var(--space-4);
+    }
+    .position {
+      display: none;
+    }
+  }
+  @media (max-width: 1279px) {
+    .inbox {
+      grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
+    }
+    .evidence-pane {
+      grid-column: 2;
+      position: static;
+      max-height: none;
+    }
+  }
+  @media (max-width: 899px) {
+    .inbox {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .list-pane {
+      display: none;
+    }
+    .back.narrow {
+      display: block;
+    }
+    .evidence-pane {
+      grid-column: 1;
+    }
+    /* Phones: two compact rows, a note link above Return and Approve side by side. */
+    .decide-bar {
+      bottom: calc(var(--tabbar-height) + var(--space-3));
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-md);
+    }
+    .step {
+      display: none;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas: 'note note' 'return approve';
+      width: 100%;
+      gap: var(--space-2);
+    }
+    .return {
+      grid-area: return;
+    }
+    .return summary {
+      width: 100%;
+    }
+    .approve {
+      display: contents;
+    }
+    .approve-extra {
+      grid-area: note;
+      justify-self: end;
+    }
+    .approve-button {
+      grid-area: approve;
+      width: 100%;
+      padding: 0 var(--space-3);
+    }
+    .diff tbody th {
+      width: auto;
+    }
+  }
+</style>

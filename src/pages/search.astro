@@ -1,0 +1,96 @@
+---
+// Search (decision 71): items, risks, decisions and indicators by ID or name, from the box in the
+// top bar. Read through row-level security, so each person finds only what they may see
+// (counterparts: their reforms' items only). At most 50 results.
+import EmptyState from '../components/EmptyState.astro';
+import SampleBadge from '../components/SampleBadge.astro';
+import Base from '../layouts/Base.astro';
+import { t, type MessageKey } from '../i18n';
+import { asUser } from '../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fsearch', 303);
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 100);
+
+type Hit = { kind: string; id: string; name: string; reform: string | null; is_sample: boolean };
+const hits =
+  q.length < 2
+    ? []
+    : await asUser(user.claims, async (db) => {
+        const { rows } = await db.query<Hit>(
+          `with term as (select lower($1) as t)
+           select * from (
+             select i.object_type as kind, i.object_id as id, i.name, i.reform_id as reform, i.is_sample
+               from v_delivery_items i, term where position(t in lower(i.object_id || ' ' || i.name)) > 0
+             union all
+             select 'risk', k.risk_id, k.description, null, false from risks k, term where position(t in lower(k.risk_id || ' ' || k.description)) > 0
+             union all
+             select 'decision', d.decision_id, d.summary, null, false from decisions d, term where position(t in lower(d.decision_id || ' ' || d.summary)) > 0
+             union all
+             select 'indicator', i.indicator_code, case when $2 = 'fr' and i.name_fr is not null then i.name_fr else i.name_en end, null, false
+               from indicators i, term where position(t in lower(i.indicator_code || ' ' || i.name_en || ' ' || coalesce(i.name_fr, ''))) > 0
+           ) found
+           order by lower(id) = (select t from term) desc, kind, id
+           limit 50`,
+          [q, lang],
+        );
+        return rows;
+      });
+
+const href = (h: Hit) => {
+  if (['workstream', 'deliverable', 'activity', 'milestone'].includes(h.kind)) return `/items/${h.kind}/${h.id}`;
+  if (h.kind === 'risk') return '/risks?status=all#risk-list';
+  if (h.kind === 'decision') return '/governance?status=all';
+  return '/merl';
+};
+const kindLabel = (kind: string) => {
+  try {
+    return t(lang, `items.type_${kind}` as MessageKey);
+  } catch {
+    return t(lang, `search.kind_${kind}` as MessageKey);
+  }
+};
+---
+
+<Base title={t(lang, 'search.title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'search.title')}</h1>
+    <p>{q ? t(lang, 'search.results_for', { q, n: hits.length }) : t(lang, 'search.intro')}</p>
+  </div>
+  {
+    q.length > 0 && q.length < 2 ? (
+      <EmptyState message={t(lang, 'search.too_short')} />
+    ) : q && hits.length === 0 ? (
+      <EmptyState message={t(lang, 'search.none', { q })} />
+    ) : (
+      hits.length > 0 && (
+        <div class="table-wrap">
+          <table class="data-table" data-testid="search-results">
+            <thead>
+              <tr>
+                <th scope="col">{t(lang, 'search.col_what')}</th>
+                <th scope="col">{t(lang, 'search.col_kind')}</th>
+                <th scope="col">{t(lang, 'items.col_reform')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hits.map((h) => (
+                <tr data-hit={h.id}>
+                  <td>
+                    <a class="row-link" href={href(h)}>
+                      {h.name}
+                    </a>
+                    {h.is_sample && <SampleBadge />}
+                    <span class="sub">{h.id}</span>
+                  </td>
+                  <td>{kindLabel(h.kind)}</td>
+                  <td>{h.reform ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+    )
+  }
+</Base>

@@ -1,0 +1,38 @@
+{
+  "rule": "Q18",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "indicator",
+        "op": "update",
+        "id": "O1.1",
+        "fields": {
+          "target_y1": 40
+        }
+      }
+    ],
+    "context": {
+      "mode": "stored"
+    }
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "indicator",
+        "op": "update",
+        "id": "O1.1",
+        "fields": {
+          "target": 40
+        }
+      }
+    ],
+    "context": {
+      "mode": "stored"
+    },
+    "expect": {
+      "field": "target"
+    }
+  }
+}

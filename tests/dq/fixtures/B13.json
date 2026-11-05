@@ -1,0 +1,33 @@
+{
+  "rule": "B13",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "status": "not_started"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "status": "not_started",
+          "actual_date": "2026-11-01"
+        },
+        "id": "MS-001"
+      }
+    ],
+    "expect": {
+      "field": "actual_date"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "rule": "Q07",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "status": "complete",
+          "actual_date": "2026-11-10",
+          "evidence_confidence": "high"
+        },
+        "id": "MS-001",
+        "evidence_ids": [
+          "EV-001"
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "status": "complete",
+          "actual_date": "2026-11-10"
+        },
+        "id": "MS-001",
+        "evidence_ids": [
+          "EV-001"
+        ]
+      }
+    ],
+    "expect": {
+      "field": "evidence_confidence"
+    }
+  }
+}

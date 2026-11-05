@@ -1,0 +1,85 @@
+# Starts the four scheduled jobs on the hosted app (decision 88): reminders, escalations, the
+# Monday digest and the month-end snapshot. It calls POST /api/jobs/<name> with the jobs secret,
+# so it works with any host. Times are UTC (Kinshasa is UTC+1). GitHub may start a scheduled run
+# up to about 30 minutes late; running a job twice in a day sends nothing twice.
+#
+# Set up once, in the repository settings:
+#   Variables: APP_BASE_URL   the hosted address, for example https://ggp-pillar1.vercel.app
+#   Secrets:   JOBS_SECRET    the same value as the app's JOBS_SECRET
+# Until both are set, every run stops at the first step and does nothing.
+name: Scheduled jobs
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # nightly, 02:00 Kinshasa
+    - cron: '0 6 * * *' # daily, 07:00 Kinshasa
+    - cron: '0 6 * * 1' # weekly, Mondays 07:00 Kinshasa
+    - cron: '0 0 1 * *' # month_end, the 1st 01:00 Kinshasa
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Job to run
+        required: true
+        type: choice
+        options: [nightly, daily, weekly, month_end]
+      date:
+        description: Run for another day (YYYY-MM-DD), to catch up. Leave empty for today.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-jobs-${{ github.event.schedule || inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Run ${{ inputs.job || github.event.schedule }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+      JOBS_SECRET: ${{ secrets.JOBS_SECRET }}
+      SCHEDULE: ${{ github.event.schedule }}
+      JOB_INPUT: ${{ inputs.job }}
+      DATE_INPUT: ${{ inputs.date }}
+    steps:
+      - name: Check the hosted app is set up
+        id: setup
+        run: |
+          if [ -z "$APP_BASE_URL" ] || [ -z "$JOBS_SECRET" ]; then
+            echo "APP_BASE_URL or JOBS_SECRET is not set for this repository, so there is nothing to run." >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Call the job
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          case "$SCHEDULE" in
+            '0 1 * * *') job=nightly ;;
+            '0 6 * * *') job=daily ;;
+            '0 6 * * 1') job=weekly ;;
+            '0 0 1 * *') job=month_end ;;
+            *) job="$JOB_INPUT" ;;
+          esac
+          case "$job" in nightly|daily|weekly|month_end) ;; *) echo "Unknown job: $job"; exit 1 ;; esac
+          query=""
+          if [ -n "$DATE_INPUT" ]; then
+            if ! printf '%s' "$DATE_INPUT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then echo "Date must be YYYY-MM-DD."; exit 1; fi
+            query="?date=$DATE_INPUT"
+          fi
+          status=$(curl --silent --show-error --output response.json --write-out '%{http_code}' \
+            --max-time 300 --retry 2 --retry-delay 20 --retry-all-errors \
+            -X POST -H "Authorization: Bearer $JOBS_SECRET" \
+            "${APP_BASE_URL%/}/api/jobs/$job$query")
+          echo "### $job: HTTP $status" >> "$GITHUB_STEP_SUMMARY"
+          cat response.json >> "$GITHUB_STEP_SUMMARY" || true
+          [ "$status" = "200" ]
+          # Decision 92: a job whose emails partly failed turns this run red, so GitHub tells you.
+          if grep -q '"status":"partial"' response.json; then
+            echo "The job finished but some emails were not sent. They are tried again on the next run." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

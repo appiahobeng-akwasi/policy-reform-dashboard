@@ -1,0 +1,60 @@
+---
+import { LANGUAGES, t } from '../i18n';
+
+const { lang } = Astro.locals;
+const returnTo = Astro.url.pathname + Astro.url.search;
+const options = LANGUAGES.map((code) => ({
+  code,
+  short: t(lang, code === 'en' ? 'language.en_short' : 'language.fr_short'),
+  name: t(lang, code === 'en' ? 'language.en_name' : 'language.fr_name'),
+}));
+---
+
+<form method="post" action="/api/lang" class="lang-switch" aria-label={t(lang, 'language.label')}>
+  <input type="hidden" name="return_to" value={returnTo} />
+  {
+    options.map((option) => (
+      <button
+        type="submit"
+        name="lang"
+        value={option.code}
+        lang={option.code}
+        aria-pressed={option.code === lang ? 'true' : 'false'}
+        title={t(lang, 'language.switch_to', { name: option.name })}
+      >
+        {option.short}
+      </button>
+    ))
+  }
+</form>
+
+<style>
+  .lang-switch {
+    display: inline-flex;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  button {
+    font: inherit;
+    font-size: var(--text-sm);
+    min-width: 2.75rem;
+    min-height: 2.25rem;
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  button + button {
+    border-left: 1px solid var(--color-border);
+  }
+
+  button[aria-pressed='true'] {
+    background: var(--color-primary);
+    color: var(--color-primary-contrast);
+    font-weight: var(--weight-bold);
+  }
+</style>

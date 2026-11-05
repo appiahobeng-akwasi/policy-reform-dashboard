@@ -1,0 +1,18 @@
+{
+  "rule": "F03",
+  "pass": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {}
+  },
+  "fail": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {
+      "templateVersion": "0.9.0"
+    },
+    "expect": {
+      "cell": "README!B2"
+    }
+  }
+}

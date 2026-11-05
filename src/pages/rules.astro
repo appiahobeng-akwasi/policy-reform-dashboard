@@ -1,0 +1,230 @@
+---
+// Rules reference (decision 85, workflow step W4): every check the gate runs, in plain words, from
+// the rule set itself (rules/dq_rules.v1.json, CLAUDE.md rule 3), grouped by what it does: must
+// pass before sending, counts towards the score, file checks, or fixed for you. Search by ID or
+// words; any finding elsewhere links here with ?open=B03 to show one rule in the side panel.
+// The rules are not personal or restricted, so every signed-in person may read them.
+import Icon from '../components/Icon.astro';
+import ObjectIcon from '../components/ObjectIcon.astro';
+import SidePanel from '../components/SidePanel.astro';
+import Base from '../layouts/Base.astro';
+import { t, type MessageKey } from '../i18n';
+import { generalMessage } from '../lib/gate/messages';
+import { RULE_SET_V1, type Rule } from '../lib/gate/rules';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Frules', 303);
+
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 100);
+const openId = params.get('open');
+// Placeholders in plain words ("the value"), from the catalogue, so messages read in general.
+const WORDS = ['value', 'field', 'sheet', 'cell', 'date', 'example', 'allowed', 'min', 'max', 'existing', 'canonical', 'status', 'prev', 'row'];
+const words = Object.fromEntries(WORDS.map((w) => [w, t(lang, `rules_ref.words.${w}` as MessageKey)]));
+const message = (r: Rule) => generalMessage(lang === 'fr' ? r.messageFr : r.messageEn, words);
+const matches = (r: Rule) => !q || r.id.toLowerCase().includes(q.toLowerCase()) || message(r).toLowerCase().includes(q.toLowerCase());
+const TIERS = ['blocking', 'scored', 'file', 'autofix'] as const;
+const groups = TIERS.map((tier) => ({ tier, rules: RULE_SET_V1.rules.filter((r) => r.tier === tier && matches(r)) })).filter((g) => g.rules.length > 0);
+const open = openId ? (RULE_SET_V1.rules.find((r) => r.id === openId) ?? null) : null;
+const fieldLabel = (field: string | null) => {
+  if (!field) return null;
+  try {
+    return t(lang, `fields.${field}` as MessageKey);
+  } catch {
+    return null;
+  }
+};
+const routes = (r: Rule) => (r.routes === 'all' ? ['web_form', 'bulk_upload', 'on_behalf'] : [...r.routes]);
+const link = (changes: Record<string, string | null>) => {
+  const p = new URLSearchParams(params);
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null) p.delete(k);
+    else p.set(k, v);
+  }
+  const query = p.toString();
+  return `/rules${query ? `?${query}` : ''}`;
+};
+---
+
+<Base title={t(lang, 'rules_ref.title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'rules_ref.title')}</h1>
+    <p>{t(lang, 'rules_ref.intro', { threshold: RULE_SET_V1.threshold })}</p>
+    <p class="as-of">{t(lang, 'rules_ref.version', { version: RULE_SET_V1.version })}</p>
+  </div>
+
+  <form method="get" class="filters" role="search">
+    <label for="rule-search" class="visually-hidden">{t(lang, 'rules_ref.search')}</label>
+    <input id="rule-search" type="search" name="q" value={q} placeholder={t(lang, 'rules_ref.search')} maxlength="100" />
+    <button class="btn btn-secondary" type="submit">{t(lang, 'rules_ref.find')}</button>
+    {q && <a class="btn btn-ghost" href="/rules">{t(lang, 'rules_ref.clear')}</a>}
+  </form>
+
+  {
+    groups.length === 0 ? (
+      <p class="muted">{t(lang, 'rules_ref.none')}</p>
+    ) : (
+      groups.map((g) => (
+        <section class="tier" aria-labelledby={`tier-${g.tier}`}>
+          <h2 id={`tier-${g.tier}`}>
+            {t(lang, `rules_ref.tier_${g.tier}` as MessageKey)} <span class="tab-pill">{g.rules.length}</span>
+          </h2>
+          <p class="muted">{t(lang, `rules_ref.tier_${g.tier}_text` as MessageKey)}</p>
+          <ul class="rules">
+            {g.rules.map((r) => (
+              <li data-rule={r.id}>
+                <a href={link({ open: r.id })} aria-current={open?.id === r.id ? 'true' : undefined}>
+                  <span class={`rule-id tier-${r.tier}`}>{r.id}</span>
+                  <span class="rule-text">{message(r)}</span>
+                  {r.tier === 'scored' && r.weight !== null && <span class="weight">{t(lang, 'rules_ref.weight', { weight: r.weight })}</span>}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))
+    )
+  }
+
+  {
+    openId && !open && (
+      <SidePanel title={openId} closeHref={link({ open: null })}>
+        <p>{t(lang, 'rules_ref.not_found')}</p>
+      </SidePanel>
+    )
+  }
+  {
+    open && (
+      <SidePanel title={t(lang, 'rules_ref.rule', { id: open.id })} closeHref={link({ open: null })}>
+        <p class="panel-tier">
+          <ObjectIcon kind="rule" size="sm" />
+          {t(lang, `rules_ref.tier_${open.tier}` as MessageKey)}
+        </p>
+        <p class="panel-message" data-testid="rule-message">
+          {message(open)}
+        </p>
+        <dl class="facts">
+          <dt>{t(lang, 'rules_ref.what_it_does')}</dt>
+          <dd>{t(lang, `rules_ref.tier_${open.tier}_text` as MessageKey)}</dd>
+          {open.tier === 'scored' && open.weight !== null && (
+            <>
+              <dt>{t(lang, 'rules_ref.weight_label')}</dt>
+              <dd>{t(lang, 'rules_ref.weight', { weight: open.weight })}</dd>
+            </>
+          )}
+          {fieldLabel(open.field) && (
+            <>
+              <dt>{t(lang, 'rules_ref.field')}</dt>
+              <dd>{fieldLabel(open.field)}</dd>
+            </>
+          )}
+          <dt>{t(lang, 'rules_ref.routes')}</dt>
+          <dd>{routes(open).map((route) => t(lang, `approvals.route_${route}` as MessageKey)).join(', ')}</dd>
+        </dl>
+        <p class="muted small">
+          <Icon name="help" /> {t(lang, 'rules_ref.panel_note', { threshold: RULE_SET_V1.threshold })}
+        </p>
+      </SidePanel>
+    )
+  }
+</Base>
+
+<style>
+  .tier {
+    margin-top: var(--space-6);
+  }
+  .tier h2 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-1);
+  }
+  .rules {
+    margin: var(--space-3) 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-2);
+  }
+  .rules a {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface) var(--gradient-card);
+    box-shadow: var(--shadow-card);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .rules a:hover,
+  .rules a[aria-current='true'] {
+    outline: 2px solid var(--color-accent-soft);
+  }
+  .rule-id {
+    flex: none;
+    min-width: 2.75rem;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-round);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    text-align: center;
+    background: var(--color-rag-grey-bg) var(--gradient-grey-soft);
+    color: var(--color-rag-grey);
+  }
+  .tier-blocking {
+    background: var(--color-rag-red-bg) var(--gradient-red-soft);
+    color: var(--color-rag-red);
+  }
+  .tier-scored {
+    background: var(--color-rag-amber-bg) var(--gradient-amber-soft);
+    color: var(--color-rag-amber);
+  }
+  .tier-autofix {
+    background: var(--color-rag-green-bg) var(--gradient-green-soft);
+    color: var(--color-rag-green);
+  }
+  .rule-text {
+    flex: 1;
+    font-size: var(--text-md);
+  }
+  .weight {
+    flex: none;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .panel-tier {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .panel-message {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    line-height: 1.4;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2) var(--space-4);
+    font-size: var(--text-md);
+  }
+  .facts dt {
+    color: var(--color-text-muted);
+  }
+  .facts dd {
+    margin: 0;
+  }
+  .small {
+    display: flex;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+  }
+  @media (max-width: 767px) {
+    .rules a {
+      flex-wrap: wrap;
+    }
+  }
+</style>

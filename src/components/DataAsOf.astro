@@ -1,0 +1,38 @@
+---
+// How fresh a view's data is (spec 01 section 8, decision 92). Each view names its own date:
+// the last confirmation for delivery items, the risk register's last change, the latest approved
+// indicator value, the decision log's last change, or the last readiness assessment. Views that
+// show delivery items also give the stale count.
+import { formatDate, t } from '../i18n';
+import type { AsOf } from '../lib/views';
+
+interface Props {
+  value: AsOf;
+}
+const { value } = Astro.props;
+const { lang } = Astro.locals;
+const date = value.asOf ? formatDate(value.asOf.slice(0, 10), lang) : null;
+const withStale = value.kind === 'delivery' || value.kind === 'risks' || value.kind === 'portfolio';
+const line =
+  value.kind === 'delivery'
+    ? date && t(lang, 'views.data_as_of', { date })
+    : value.kind === 'merl'
+      ? date && value.period
+        ? t(lang, 'views.as_of_merl', { period: formatDate(value.period.slice(0, 10), lang), date })
+        : t(lang, 'views.as_of_merl_none')
+      : date
+        ? t(lang, `views.as_of_${value.kind}`, { date })
+        : t(lang, `views.as_of_${value.kind}_none`);
+---
+
+<p class="as-of" data-testid="as-of" data-kind={value.kind}>
+  {line && <>{line} </>}
+  {withStale && t(lang, 'views.stale_count', { n: value.stale })}
+</p>
+
+<style>
+  .as-of {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+</style>

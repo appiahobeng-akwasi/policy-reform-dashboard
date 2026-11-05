@@ -1,0 +1,119 @@
+---
+// The data quality headline (decisions 87 and 90): four even tiles. The average score in a small
+// ring against the pass mark, the first-time pass rate as a gauge, then attempts and rejected
+// attempts as numbers. Before anything is checked the tiles say so in words, not "None".
+// Used on My data quality and on the admin page; the numbers keep their test ids.
+import { formatNumber, t } from '../i18n';
+import type { Headline } from '../lib/admin/data-quality';
+import { RULE_SET_V1 } from '../lib/gate/rules';
+import Ring from './Ring.astro';
+
+interface Props {
+  headline: Headline;
+  testId?: string;
+}
+const { headline, testId } = Astro.props;
+const { lang } = Astro.locals;
+const threshold = RULE_SET_V1.threshold;
+const score = headline.averageScore;
+const passed = score !== null && score >= threshold;
+const rate = headline.firstTimePassRate;
+---
+
+<ul class="dq-summary" data-testid={testId}>
+  <li class="dq-tile">
+    <Ring
+      id="dq-score"
+      size={64}
+      gauge={{ value: score, max: 100, colour: passed ? 'emerald' : 'coral' }}
+      track="#eef1ec"
+      label={score === null ? t(lang, 'dq.none') : t(lang, 'dq.score_label', { score: formatNumber(score, lang), threshold })}
+    />
+    <div class="dq-text">
+      <p class="dq-label">{t(lang, 'dq.average_score')}</p>
+      <p class:list={['dq-value', { good: passed, below: score !== null && !passed }]}>{score === null ? t(lang, 'dq.not_yet') : formatNumber(score, lang)}</p>
+      <p class="dq-note">
+        {score !== null && <>{t(lang, passed ? 'dq.score_good' : 'dq.score_below')} · </>}
+        {t(lang, 'dq.pass_mark', { threshold })}
+      </p>
+    </div>
+  </li>
+  <li class="dq-tile">
+    <Ring
+      id="dq-rate"
+      size={64}
+      gauge={{ value: rate, max: 100, colour: 'sky' }}
+      track="#eef1ec"
+      label={rate === null ? t(lang, 'dq.none') : t(lang, 'dq.rate_label', { pct: formatNumber(rate, lang) })}
+    />
+    <div class="dq-text">
+      <p class="dq-label">{t(lang, 'dq.first_time_pass_rate')}</p>
+      <p class="dq-value" data-testid="pass-rate">{rate === null ? t(lang, 'dq.not_yet') : `${formatNumber(rate, lang)}%`}</p>
+      <p class="dq-note">{t(lang, 'dq.rate_note')}</p>
+    </div>
+  </li>
+  <li class="dq-tile">
+    <div class="dq-text">
+      <p class="dq-label">{t(lang, 'dq.attempts')}</p>
+      <p class="dq-value" data-testid="attempts">{headline.attempts}</p>
+      <p class="dq-note">{t(lang, 'dq.attempts_note')}</p>
+    </div>
+  </li>
+  <li class="dq-tile">
+    <div class="dq-text">
+      <p class="dq-label">{t(lang, 'dq.rejects')}</p>
+      <p class:list={['dq-value', { below: headline.rejects > 0 }]} data-testid="rejects">{headline.rejects}</p>
+      <p class="dq-note">{t(lang, 'dq.rejects_note')}</p>
+    </div>
+  </li>
+</ul>
+
+<style>
+  .dq-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    gap: var(--space-3);
+    margin: 0 0 var(--space-6);
+    padding: 0;
+    list-style: none;
+  }
+  .dq-tile {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-surface) var(--gradient-card);
+    box-shadow: var(--shadow-card);
+  }
+  .dq-tile :global(.ring) {
+    flex: none;
+  }
+  .dq-text {
+    min-width: 0;
+  }
+  .dq-text p {
+    margin: 0;
+  }
+  .dq-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .dq-value {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-heavy);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+  .dq-value.good {
+    color: var(--color-rag-green);
+  }
+  .dq-value.below {
+    color: var(--color-rag-red);
+  }
+  .dq-note {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+</style>

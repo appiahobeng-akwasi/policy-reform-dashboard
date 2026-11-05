@@ -1,0 +1,169 @@
+---
+// Monthly average quality score as an area chart (docs/08 v0.2 section 4; CLAUDE.md: no charting
+// library): a gradient line over a fading fill, the pass mark, and the latest value named. The
+// same numbers are in a table for screen readers. With showPassRate, a dashed second line shows
+// the first-time pass rate (data quality pages).
+import { t } from '../i18n';
+import { area } from '../lib/charts';
+
+interface Props {
+  points: { month: string; score: number; runs: number; passRate?: number | null }[];
+  showPassRate?: boolean;
+  /** Unique on the page: the gradients are named after it. */
+  id?: string;
+}
+const { points, showPassRate = false, id = 'trend' } = Astro.props;
+const { lang } = Astro.locals;
+
+const BOX = { width: 560, height: 200, left: 30, right: 14, top: 14, bottom: 26 };
+const score = area(
+  points.map((p) => p.score),
+  BOX,
+);
+const rate = area(
+  points.map((p) => (typeof p.passRate === 'number' ? p.passRate : null)),
+  BOX,
+);
+const last = score.points.at(-1);
+const monthLabel = (iso: string) =>
+  new Intl.DateTimeFormat(lang === 'fr' ? 'fr-FR' : 'en-GB', { month: 'short', timeZone: 'UTC' }).format(new Date(`${iso}T00:00:00Z`));
+---
+
+<figure class="trend">
+  <svg viewBox={`0 0 ${BOX.width} ${BOX.height}`} role="img" aria-labelledby={`${id}-title`} width="100%">
+    <title id={`${id}-title`}>{t(lang, 'views.trend_alt')}</title>
+    <defs>
+      <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#4fe0ad" stop-opacity="0.45"></stop>
+        <stop offset="1" stop-color="#4fe0ad" stop-opacity="0"></stop>
+      </linearGradient>
+      <linearGradient id={`${id}-line`} x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#7fdc8f"></stop>
+        <stop offset="1" stop-color="#008a63"></stop>
+      </linearGradient>
+    </defs>
+    {
+      [0, 50, 100].map((v) => (
+        <>
+          <line x1={BOX.left} x2={BOX.width - BOX.right} y1={score.yAt(v)} y2={score.yAt(v)} class="grid" />
+          <text x={BOX.left - 6} y={score.yAt(v) + 4} class="axis" text-anchor="end">
+            {v}
+          </text>
+        </>
+      ))
+    }
+    <line x1={BOX.left} x2={BOX.width - BOX.right} y1={score.yAt(80)} y2={score.yAt(80)} class="pass" />
+    <text x={BOX.width - BOX.right} y={score.yAt(80) - 5} class="axis pass-label" text-anchor="end">{t(lang, 'views.pass_mark')}</text>
+    {score.fill && <path d={score.fill} fill={`url(#${id}-fill)`} />}
+    {score.points.length > 1 && <path d={score.line} class="line" stroke={`url(#${id}-line)`} />}
+    {showPassRate && rate.points.length > 1 && <path d={rate.line} class="line rate" />}
+    {showPassRate && rate.points.map((p) => <rect x={p.x - 3} y={p.y - 3} width="6" height="6" rx="1.5" class="rate-dot" />)}
+    {score.points.map((p) => <circle cx={p.x} cy={p.y} r="4.5" class="dot" />)}
+    {
+      last && (
+        <text x={last.x} y={last.y - 11} class="value" text-anchor={last.x > BOX.width - 60 ? 'end' : 'middle'}>
+          {last.value}
+        </text>
+      )
+    }
+    {
+      points.map((p, i) => (
+        <text x={score.xAt(i)} y={BOX.height - 6} class="axis" text-anchor="middle">
+          {monthLabel(p.month)}
+        </text>
+      ))
+    }
+  </svg>
+  <div class="visually-hidden">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{t(lang, 'views.trend_month')}</th>
+          <th scope="col">{t(lang, 'views.trend_score')}</th>
+          <th scope="col">{t(lang, 'views.trend_runs')}</th>
+          {showPassRate && <th scope="col">{t(lang, 'dq.first_time_pass_rate')}</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {
+          points.map((p) => (
+            <tr>
+              <td>{monthLabel(p.month)}</td>
+              <td>{p.score}</td>
+              <td>{p.runs}</td>
+              {showPassRate && <td>{p.passRate ?? ''}</td>}
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  {
+    showPassRate && (
+      <figcaption class="legend">
+        <span class="key key-score" /> {t(lang, 'views.trend_score')} <span class="key key-rate" /> {t(lang, 'dq.first_time_pass_rate')}
+      </figcaption>
+    )
+  }
+</figure>
+
+<style>
+  .trend {
+    margin: 0;
+  }
+  .grid {
+    stroke: var(--color-border);
+    stroke-width: 1;
+  }
+  .pass {
+    stroke: #f0971c;
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .line {
+    fill: none;
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .dot {
+    fill: #ffffff;
+    stroke: #008a63;
+    stroke-width: 3;
+  }
+  .rate {
+    stroke: var(--color-text-muted);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+  }
+  .rate-dot {
+    fill: var(--color-text-muted);
+  }
+  .value {
+    font-size: 15px;
+    font-weight: 800;
+    fill: var(--color-text);
+  }
+  .legend {
+    margin-top: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .key {
+    display: inline-block;
+    width: 1.5rem;
+    vertical-align: middle;
+    border-top: 3px solid #008a63;
+  }
+  .key-rate {
+    margin-left: var(--space-3);
+    border-top: 2px dashed var(--color-text-muted);
+  }
+  .axis {
+    font-size: 12px;
+    fill: var(--color-text-muted);
+  }
+  .pass-label {
+    fill: var(--color-rag-amber);
+  }
+</style>

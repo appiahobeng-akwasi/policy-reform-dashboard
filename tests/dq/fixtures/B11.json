@@ -1,0 +1,44 @@
+{
+  "rule": "B11",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001"
+      }
+    ],
+    "context": {
+      "rowScope": [
+        true
+      ]
+    }
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001"
+      }
+    ],
+    "context": {
+      "rowScope": [
+        false
+      ],
+      "rowReforms": [
+        [
+          "RA1"
+        ]
+      ]
+    },
+    "expect": {
+      "field": "reform_id",
+      "value": "RA1"
+    }
+  }
+}

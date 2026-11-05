@@ -1,0 +1,48 @@
+---
+// A reform area's fixed icon on its soft gradient (decision 74), with its code and name.
+// Programme-wide items get the neutral globe.
+import { reformTheme } from '../lib/charts';
+import Icon from './Icon.astro';
+
+interface Props {
+  reformId: string | null;
+  /** The code and name in the reader's language, such as "RA1 · Land governance". */
+  label: string;
+  /** Icon only, with the label kept for screen readers. */
+  compact?: boolean;
+}
+const { reformId, label, compact = false } = Astro.props;
+const theme = reformTheme(reformId);
+---
+
+<span class={`reform-chip reform-${theme.key}`} data-reform-chip={theme.key}>
+  <span class="reform-icon" aria-hidden="true"><Icon name={theme.icon} /></span>
+  <span class:list={['reform-label', { 'visually-hidden': compact }]}>{label}</span>
+</span>
+
+<style>
+  .reform-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: 0.01em;
+  }
+  .reform-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 50%;
+    flex: none;
+  }
+  .reform-ra1 { color: var(--color-ra1); }
+  .reform-ra2 { color: var(--color-ra2); }
+  .reform-ra3 { color: var(--color-ra3); }
+  .reform-programme { color: var(--color-programme); }
+  .reform-ra1 .reform-icon { background: var(--gradient-ra1-soft); }
+  .reform-ra2 .reform-icon { background: var(--gradient-ra2-soft); }
+  .reform-ra3 .reform-icon { background: var(--gradient-ra3-soft); }
+  .reform-programme .reform-icon { background: var(--gradient-programme-soft); }
+</style>

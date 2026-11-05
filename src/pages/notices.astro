@@ -1,0 +1,113 @@
+---
+// In-app notices (spec 01 section 10, decision 36). Opening the page marks them read.
+import Base from '../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../i18n';
+import { itemPath, reminderText } from '../lib/jobs/messages';
+import { asUser } from '../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fnotices', 303);
+
+type Notice = { kind: string; sent_at: string; read_at: string | null; object_type: string | null; object_id: string | null; detail: Record<string, unknown> | null; name: string | null; name_fr: string | null; reform_id: string | null; route: string | null; review_note: string | null; first_entity: string | null; first_id: string | null };
+const notices = await asUser(user.claims, async (db) => {
+  const { rows } = await db.query<Notice>(
+    `select n.kind, n.sent_at::text, n.read_at::text, n.object_type, n.object_id, n.detail, s.route, s.review_note,
+            coalesce(i.name, k.description, ps.label_en) as name, ps.label_fr as name_fr, coalesce(i.reform_id, st.reform_id) as reform_id,
+            s.payload -> 'rows' -> 0 ->> 'entity' as first_entity, s.payload -> 'rows' -> 0 ->> 'id' as first_id
+       from notification_log n
+       left join submissions s on n.object_type = 'submission' and s.submission_id::text = n.object_id
+       left join v_delivery_items i on i.object_type = n.object_type and i.object_id = n.object_id
+       left join risks k on n.object_type = 'risk' and k.risk_id = n.object_id
+       left join reform_stages st on n.object_type = 'reform_stage' and st.stage_record_id = n.object_id
+       left join pathway_stages ps on ps.code = st.stage
+      where n.person_id = (me()).person_id and n.channel = 'in_app'
+      order by n.sent_at desc limit 100`,
+  );
+  await db.query('select mark_my_notices_read()');
+  return rows;
+});
+
+const ruleName = (id: string) => {
+  try {
+    return `${id} ${t(lang, `rules.${id}` as MessageKey)}`;
+  } catch {
+    return id;
+  }
+};
+const JOB_KINDS = ['due_soon', 'overdue', 'escalation', 'stale_item', 'risk_review', 'pathway_stalled', 'follow_up_list'];
+const text = (n: Notice) =>
+  JOB_KINDS.includes(n.kind)
+    ? reminderText(lang, { kind: n.kind, objectType: n.object_type ?? '', objectId: n.object_id ?? '', name: n.name, nameFr: n.name_fr, detail: n.detail })
+    : n.kind === 'weekly_digest'
+      ? t(lang, 'notices.weekly_digest')
+      : n.kind === 'error_alert'
+        ? t(lang, 'notices.error_alert')
+      : n.kind === 'training_suggested'
+    ? t(lang, 'notices.training', { rules: (n.object_id ?? '').split(',').filter(Boolean).map(ruleName).join('; ') })
+    : n.kind === 'submission_approved'
+    ? t(lang, 'notices.approved')
+    : n.kind === 'submission_returned'
+      ? n.review_note
+        ? t(lang, 'notices.returned', { note: n.review_note })
+        : t(lang, 'notices.returned_no_note')
+      : n.kind === 'approval_needed'
+        ? t(lang, 'notices.approval_needed')
+        : n.kind === 'entered_on_behalf'
+          ? t(lang, 'notices.entered_on_behalf')
+          : t(lang, 'notices.other');
+const link = (n: Notice): string | null => {
+  if (n.kind === 'training_suggested') return '/my-data-quality';
+  if (n.kind === 'follow_up_list') return '/on-behalf';
+  if (n.kind === 'weekly_digest') return '/my-items';
+  if (n.kind === 'error_alert') return '/admin/errors';
+  if (JOB_KINDS.includes(n.kind)) return itemPath({ objectType: n.object_type ?? '', objectId: n.object_id ?? '' }, n.reform_id);
+  if (!n.object_id) return null;
+  if (n.kind === 'approval_needed') return `/approvals/${n.object_id}`;
+  if (n.route === 'bulk_upload') return `/uploads/${n.object_id}`;
+  if (n.first_entity && n.first_id && ['workstream', 'deliverable', 'activity', 'milestone'].includes(n.first_entity)) return `/items/${n.first_entity}/${n.first_id}`;
+  return null;
+};
+---
+
+<Base title={t(lang, 'notices.title')}>
+  <h1>{t(lang, 'notices.title')}</h1>
+  {
+    notices.length === 0 ? (
+      <p>{t(lang, 'notices.none')}</p>
+    ) : (
+      <ul class="notices">
+        {notices.map((n) => (
+          <li class:list={[{ unread: !n.read_at }]} data-kind={n.kind}>
+            {!n.read_at && <span class="badge">{t(lang, 'notices.unread')}</span>} {text(n)}
+            <span class="meta"> · {formatDate(n.sent_at, lang)}</span>
+            {link(n) && (
+              <>
+                {' · '}
+                <a href={link(n)!}>{t(lang, 'notices.open')}</a>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+</Base>
+
+<style>
+  .notices {
+    list-style: none;
+    padding: 0;
+  }
+  .notices li {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .unread {
+    font-weight: var(--weight-bold);
+  }
+  .meta {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-normal);
+  }
+</style>

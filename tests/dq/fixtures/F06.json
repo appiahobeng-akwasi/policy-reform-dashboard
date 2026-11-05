@@ -1,0 +1,47 @@
+{
+  "rule": "F06",
+  "pass": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {}
+  },
+  "fail": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {
+      "sheets": [
+        {
+          "name": "Milestones",
+          "headers": [
+            "milestone_id",
+            "reform_id",
+            "deliverable_id",
+            "name",
+            "milestone_type",
+            "pathway_stage",
+            "is_decision_gate",
+            "owner_email",
+            "planned_date",
+            "forecast_date",
+            "actual_date",
+            "status",
+            "evidence_ids",
+            "evidence_confidence",
+            "next_action",
+            "blocker",
+            "comments",
+            "reported_by_email"
+          ],
+          "dataRows": 3,
+          "formulaCells": [
+            "L4"
+          ]
+        }
+      ]
+    },
+    "expect": {
+      "sheet": "Milestones",
+      "cell": "L4"
+    }
+  }
+}

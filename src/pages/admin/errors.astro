@@ -1,0 +1,87 @@
+---
+// Errors (decision 64): the latest server errors with their reference, so a person who quotes a
+// reference can be helped. Admins only. Messages were cleaned of emails and tokens when logged.
+import Base from '../../layouts/Base.astro';
+import { formatDateTime, t } from '../../i18n';
+import { ADMIN_ROLES } from '../../lib/admin/users';
+import { asUser } from '../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin%2Ferrors', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+const ref = (Astro.url.searchParams.get('ref') ?? '').trim().toUpperCase();
+type Row = { reference: string; at: string; source: string; method: string | null; path: string | null; status: number | null; error_name: string | null; message: string };
+const data = allowed
+  ? await asUser(user.claims, async (db) => {
+      const rows = await db.query<Row>(
+        `select reference, at::text, source, method, path, status, error_name, message from error_log
+          where ($1 = '' or reference = $1) order by at desc limit 100`,
+        [ref],
+      );
+      const day = await db.query<{ n: number }>("select count(*)::int as n from error_log where at > now() - interval '24 hours'");
+      return { rows: rows.rows, lastDay: day.rows[0]?.n ?? 0 };
+    })
+  : null;
+---
+
+<Base title={t(lang, 'admin.errors_title')}>
+  <p><a href="/admin">{t(lang, 'admin.hub_title')}</a></p>
+  <h1>{t(lang, 'admin.errors_title')}</h1>
+  {
+    !data ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        <p>{t(lang, 'admin.errors_intro')}</p>
+        <p class={data.lastDay > 0 ? 'error' : 'notice'} data-testid="errors-day">
+          {t(lang, 'admin.errors_last_day', { n: data.lastDay })}
+        </p>
+        <form method="get" class="filters">
+          <div>
+            <label for="ref">{t(lang, 'admin.errors_reference')}</label>
+            <input id="ref" name="ref" type="search" value={ref} placeholder="E-7K2Q9X" />
+          </div>
+          <button class="button" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+        {data.rows.length === 0 ? (
+          <p>{t(lang, 'admin.errors_none')}</p>
+        ) : (
+          <div class="table-wrap">
+            <table class="data-table" data-testid="errors">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'admin.errors_reference')}</th>
+                  <th scope="col">{t(lang, 'dq.when')}</th>
+                  <th scope="col">{t(lang, 'admin.errors_where')}</th>
+                  <th scope="col">{t(lang, 'admin.errors_what')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r) => (
+                  <tr data-reference={r.reference}>
+                    <th scope="row">{r.reference}</th>
+                    <td>{formatDateTime(r.at, lang)}</td>
+                    <td>
+                      {t(lang, `admin.errors_source_${r.source}` as 'admin.errors_source_request')}
+                      {r.path && (
+                        <>
+                          <br />
+                          <code>
+                            {r.method} {r.path}
+                          </code>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      <code>{r.error_name}</code> {r.message}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+</Base>

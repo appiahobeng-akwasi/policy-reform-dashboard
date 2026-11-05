@@ -1,0 +1,36 @@
+# Dependencies and build output
+node_modules/
+dist/
+.astro/
+coverage/
+playwright-report/
+test-results/
+
+# Environment: never commit real keys. Only .env.example is tracked.
+.env
+.env.*
+!.env.example
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Original source workbooks are marked Restricted. Kept out of git until the
+# Project Lead confirms they may sit in the repository (see docs/07).
+source/
+
+# OS and editor files
+.DS_Store
+~$*.xlsx
+~$*.docx
+*.swp
+.vscode/
+.idea/
+
+# Playwright
+test-results/
+playwright-report/
+
+# Backups hold real data: never commit them.
+backups/
+.vercel/

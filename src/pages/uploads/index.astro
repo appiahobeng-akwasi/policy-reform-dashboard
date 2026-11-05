@@ -1,0 +1,74 @@
+---
+// Your bulk uploads and where each one stands.
+import EmptyState from '../../components/EmptyState.astro';
+import StatusPill from '../../components/StatusPill.astro';
+import Base from '../../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../../i18n';
+import { BULK_ROLES } from '../../lib/bulk/process';
+import { asUser } from '../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fuploads', 303);
+const allowed = BULK_ROLES.includes(user.role);
+
+const uploads = allowed
+  ? await asUser(user.claims, async (db) => {
+      const { rows } = await db.query<{ submission_id: string; file_name: string; created_at: string; status: string; quality_score: string | null }>(
+        `select s.submission_id, b.file_name, s.created_at::text, s.status,
+                (select r.quality_score from dq_runs r where r.submission_id = s.submission_id order by r.started_at desc, r.attempt_no desc limit 1) as quality_score
+           from submissions s join upload_batches b on b.batch_id = s.batch_id
+          where s.submitted_by = (me()).user_id and s.route = 'bulk_upload'
+          order by s.created_at desc limit 50`,
+      );
+      return rows;
+    })
+  : [];
+---
+
+<Base title={t(lang, 'bulk.title')} action={allowed ? { href: '/uploads/new', label: t(lang, 'bulk.upload') } : undefined}>
+  <div class="page-head">
+    <h1>{t(lang, 'bulk.title')}</h1>
+    {allowed && <p>{t(lang, 'bulk.intro')}</p>}
+  </div>
+  {
+    !allowed ? (
+      <p class="notice">{t(lang, 'bulk.not_allowed')}</p>
+    ) : (
+      <>
+        <h2>{t(lang, 'bulk.my_uploads')}</h2>
+        {uploads.length === 0 ? (
+          <EmptyState message={t(lang, 'bulk.none')} />
+        ) : (
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'bulk.col_file')}</th>
+                  <th scope="col">{t(lang, 'bulk.col_date')}</th>
+                  <th scope="col">{t(lang, 'bulk.col_status')}</th>
+                  <th scope="col" class="number">{t(lang, 'bulk.col_score')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uploads.map((u) => (
+                  <tr>
+                    <td>
+                      <a class="row-link" href={`/uploads/${u.submission_id}`}>
+                        {u.file_name}
+                      </a>
+                    </td>
+                    <td class="tabular">{formatDate(u.created_at, lang)}</td>
+                    <td>
+                      <StatusPill status={u.status} label={t(lang, `bulk.status_${u.status}` as MessageKey)} />
+                    </td>
+                    <td class="number">{u.quality_score ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+</Base>

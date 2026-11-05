@@ -1,0 +1,50 @@
+---
+// Tabs that are plain links (decision 90): one section of a page at a time, Ramp style, without
+// JavaScript. The address says which tab is open, so it can be shared and survives a reload.
+// On a phone the row scrolls sideways inside itself; the page never does.
+interface Tab {
+  key: string;
+  label: string;
+  count?: number | null;
+  href: string;
+}
+interface Props {
+  tabs: Tab[];
+  current: string;
+  /** What the tabs choose between, for screen readers ("Sections of the risk view"). */
+  label: string;
+}
+const { tabs, current, label } = Astro.props;
+---
+
+<nav class="tabs link-tabs" aria-label={label}>
+  {
+    tabs.map((tab) => (
+      <a href={tab.href} aria-current={tab.key === current ? 'page' : undefined} data-tab={tab.key}>
+        {tab.label}
+        {tab.count != null && <span class="tab-pill">{tab.count}</span>}
+      </a>
+    ))
+  }
+</nav>
+
+<style>
+  .link-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: var(--space-6) 0 var(--space-4);
+  }
+  .link-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .link-tabs a {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .link-tabs a:hover {
+    color: var(--color-text);
+  }
+</style>

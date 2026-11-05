@@ -1,0 +1,33 @@
+{
+  "rule": "B05",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "planned_date": "2026-12-15"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "planned_date": "15/12/2026"
+        },
+        "id": "MS-001"
+      }
+    ],
+    "expect": {
+      "field": "planned_date",
+      "value": "15/12/2026"
+    }
+  }
+}

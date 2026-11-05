@@ -1,0 +1,15 @@
+---
+import Base from '../layouts/Base.astro';
+import { t } from '../i18n';
+
+const { lang, user } = Astro.locals;
+// Signed-in people land on the Executive view (decision 40).
+if (user) return Astro.redirect('/executive', 303);
+---
+
+<Base title={t(lang, 'home.title')}>
+  <h1>{t(lang, 'home.title')}</h1>
+  <p class="notice">{t(lang, 'home.intro')}</p>
+  {!user && <p><a class="button" href="/sign-in">{t(lang, 'home.sign_in_prompt')}</a></p>}
+  <p>{t(lang, 'home.language_note')}</p>
+</Base>

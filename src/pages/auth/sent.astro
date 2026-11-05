@@ -1,0 +1,21 @@
+---
+import Icon from '../../components/Icon.astro';
+import Base from '../../layouts/Base.astro';
+import { t } from '../../i18n';
+
+const { lang } = Astro.locals;
+const email = Astro.cookies.get('sign_in_sent_to')?.value;
+if (!email) return Astro.redirect('/sign-in', 303);
+---
+
+<Base title={t(lang, 'auth.sent_title')} variant="auth">
+  <div class="auth-form">
+    <span class="auth-icon" aria-hidden="true"><Icon name="mail" /></span>
+    <h1>{t(lang, 'auth.sent_title')}</h1>
+    <p class="auth-lead">{t(lang, 'auth.sent_body', { email })}</p>
+    <p class="auth-note">
+      <Icon name="help" />
+      <span>{t(lang, 'auth.sent_spam')} <a href="/sign-in">{t(lang, 'auth.try_again')}</a></span>
+    </p>
+  </div>
+</Base>

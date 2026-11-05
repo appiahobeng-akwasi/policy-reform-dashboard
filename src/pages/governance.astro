@@ -1,0 +1,686 @@
+---
+// Governance and adaptation view (spec 01 section 8, decision 90): what decision or change is
+// required? Four tiles, then one tab at a time: the decision log (one row per decision, CLAUDE.md),
+// follow-up actions, adaptations, who does what (RACI, one reform at a time) and the review
+// calendar with its packs. A decision or adaptation opens in the side panel with its full text.
+// Internal users only.
+import DataAsOf from '../components/DataAsOf.astro';
+import EmptyState from '../components/EmptyState.astro';
+import Icon from '../components/Icon.astro';
+import LinkTabs from '../components/LinkTabs.astro';
+import ReformChip from '../components/ReformChip.astro';
+import SidePanel from '../components/SidePanel.astro';
+import StatCard from '../components/StatCard.astro';
+import Base from '../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../i18n';
+import { listPacks } from '../lib/reviews/pack';
+import { reviewTypeLabel } from '../lib/reviews/render';
+import { asUser } from '../lib/server-db';
+import { dataAsOf, loadLabels } from '../lib/views';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fgovernance', 303);
+const internal = user.role !== 'viewer_counterpart';
+const params = Astro.url.searchParams;
+const status = params.get('status');
+const filter = {
+  reform: /^RA[0-9]$/.test(params.get('reform') ?? '') ? params.get('reform') : null,
+  status: status === 'open' || status === 'implemented' || status === 'closed' || status === 'cancelled' || status === 'all' ? status : 'open',
+};
+const TABS = ['decisions', 'actions', 'adaptations', 'raci', 'reviews'] as const;
+type Tab = (typeof TABS)[number];
+const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'decisions';
+const openDecisionId = /^DC-[\w-]+$/.test(params.get('decision') ?? '') ? params.get('decision') : null;
+const openAdaptationId = /^AD-[\w-]+$/.test(params.get('adaptation') ?? '') ? params.get('adaptation') : null;
+const link = (changes: Record<string, string | null>) => {
+  const p = new URLSearchParams(params);
+  if (!('decision' in changes)) p.delete('decision');
+  if (!('adaptation' in changes)) p.delete('adaptation');
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null) p.delete(k);
+    else p.set(k, v);
+  }
+  const query = p.toString();
+  return `/governance${query ? `?${query}` : ''}`;
+};
+
+type Decision = {
+  decision_id: string;
+  decision_date: string;
+  decision_type: string;
+  decision_body: string | null;
+  decision_maker: string | null;
+  governance_tier: number | null;
+  summary: string;
+  reason: string | null;
+  follow_up_action: string | null;
+  owner: string | null;
+  follow_up_due: string | null;
+  status: string;
+  overdue: boolean;
+  reforms: string[];
+};
+type Adaptation = {
+  adaptation_id: string;
+  trigger_event: string;
+  trigger_type: string | null;
+  original_plan: string | null;
+  change_requested: string;
+  change_approved: boolean | null;
+  approval_date: string | null;
+  approved_by: string | null;
+  rationale: string | null;
+  follow_up_action: string | null;
+  links: string[];
+};
+type Raci = { raci_id: string; reform_id: string | null; activity: string; responsible: string | null; accountable: string | null; consulted: string | null; informed: string | null; approval_gate: string | null; review_forum: string | null };
+
+const data = internal
+  ? await asUser(user.claims, async (db) => {
+      const reforms = await db.query<{ reform_id: string }>('select reform_id from reforms order by reform_id');
+      const reformClause = (table: string, key: string) =>
+        `($1::text is null or exists (select 1 from ${table} l where l.${key} = x.${key} and l.object_type = 'reform' and l.object_id = $1))`;
+      const decisions = await db.query<Decision>(
+        `select x.decision_id, x.decision_date, x.decision_type, x.decision_body, x.decision_maker, x.governance_tier, x.summary, x.reason, x.follow_up_action,
+                coalesce(p.full_name, x.follow_up_owner_text) as owner, x.follow_up_due, x.status,
+                x.status = 'open' and x.follow_up_due < current_date as overdue,
+                coalesce((select array_agg(l.object_id order by l.object_id) from decision_links l where l.decision_id = x.decision_id and l.object_type = 'reform'), '{}') as reforms
+           from decisions x left join people p on p.person_id = x.follow_up_owner_person_id
+          where ${reformClause('decision_links', 'decision_id')} and ($2 = 'all' or x.status = $2)
+          order by x.decision_date desc, x.decision_id`,
+        [filter.reform, filter.status],
+      );
+      // Decisions by status for the ring, whatever the status filter (the reform filter still applies).
+      const byStatus = await db.query<{ status: string; n: number; overdue: number }>(
+        `select x.status, count(*)::int as n, count(*) filter (where x.status = 'open' and x.follow_up_due < current_date)::int as overdue
+           from decisions x where ${reformClause('decision_links', 'decision_id')} group by x.status`,
+        [filter.reform],
+      );
+      const actions = await db.query<{ action_id: string; source_type: string; source_id: string | null; description: string; owner: string | null; due_date: string | null; status: string; overdue: boolean }>(
+        `select a.action_id, a.source_type, a.source_id, a.description, p.full_name as owner, a.due_date, a.status, a.status = 'open' and a.due_date < current_date as overdue
+           from actions a left join people p on p.person_id = a.owner_person_id
+          order by a.status, a.due_date nulls last, a.action_id`,
+      );
+      const adaptations = await db.query<Adaptation>(
+        `select x.adaptation_id, x.trigger_event, x.trigger_type, x.original_plan, x.change_requested, x.change_approved, x.approval_date, x.approved_by, x.rationale, x.follow_up_action,
+                coalesce((select array_agg(l.object_id order by l.object_id) from adaptation_links l where l.adaptation_id = x.adaptation_id), '{}') as links
+           from adaptations x
+          where ${reformClause('adaptation_links', 'adaptation_id')}
+          order by x.adaptation_id`,
+        [filter.reform],
+      );
+      const raci = await db.query<Raci>(
+        `select raci_id, reform_id, activity, responsible, accountable, consulted, informed, approval_gate, review_forum
+           from governance_raci where ($1::text is null or reform_id = $1 or reform_id is null) order by reform_id nulls first, raci_id`,
+        [filter.reform],
+      );
+      const reviews = await db.query<{ review_type: string; review_date: string; title: string | null; governance_tier: number | null }>(
+        'select review_type, review_date, title, governance_tier from reviews where review_date >= current_date - 31 order by review_date',
+      );
+      // The decision in the side panel, whatever the status filter.
+      const openDecision = openDecisionId
+        ? await db.query<Decision>(
+            `select x.decision_id, x.decision_date, x.decision_type, x.decision_body, x.decision_maker, x.governance_tier, x.summary, x.reason, x.follow_up_action,
+                    coalesce(p.full_name, x.follow_up_owner_text) as owner, x.follow_up_due, x.status,
+                    x.status = 'open' and x.follow_up_due < current_date as overdue,
+                    coalesce((select array_agg(l.object_id order by l.object_id) from decision_links l where l.decision_id = x.decision_id and l.object_type = 'reform'), '{}') as reforms
+               from decisions x left join people p on p.person_id = x.follow_up_owner_person_id where x.decision_id = $1`,
+            [openDecisionId],
+          )
+        : null;
+      return {
+        reforms: reforms.rows.map((r) => r.reform_id),
+        decisions: decisions.rows,
+        byStatus: byStatus.rows,
+        actions: actions.rows,
+        adaptations: adaptations.rows,
+        raci: raci.rows,
+        reviews: reviews.rows,
+        openDecision: openDecision?.rows[0] ?? null,
+        asOf: await dataAsOf(db, 'governance'),
+        label: await loadLabels(db, ['decision_type', 'decision_status', 'action_status', 'action_source'], lang),
+      };
+    })
+  : null;
+const packs = data ? (await listPacks(user.claims)).slice(0, 5) : [];
+const tier = (n: number | null) => (n ? t(lang, `reviews.tier_${n}` as MessageKey) : t(lang, 'reviews.tier_unset'));
+const raciReforms = [...new Set((data?.raci ?? []).map((r) => r.reform_id))];
+const statusCount = (status: string) => data?.byStatus.find((b) => b.status === status)?.n ?? 0;
+const followUpsOverdue = (data?.byStatus ?? []).reduce((sum, b) => sum + b.overdue, 0);
+const adaptationsApproved = (data?.adaptations ?? []).filter((a) => a.change_approved === true).length;
+const today = new Date().toISOString().slice(0, 10);
+const nextReview = (data?.reviews ?? []).find((r) => r.review_date >= today) ?? null;
+const openAdaptation = openAdaptationId ? ((data?.adaptations ?? []).find((a) => a.adaptation_id === openAdaptationId) ?? null) : null;
+const raciReform = raciReforms.includes(params.get('raci') ?? '') ? params.get('raci') : (raciReforms[0] ?? null);
+const adaptationState = (a: Adaptation) =>
+  a.change_approved === true
+    ? { tone: 'green', text: t(lang, 'governance.approved') }
+    : a.change_approved === false
+      ? { tone: 'red', text: t(lang, 'governance.not_approved') }
+      : { tone: 'amber', text: t(lang, 'governance.pending') };
+const triggerLabel = (type: string | null) => (type ? t(lang, `governance.trigger_${type}` as MessageKey) : null);
+---
+
+<Base title={t(lang, 'governance.title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'governance.title')}</h1>
+    <p>{t(lang, 'governance.question')}</p>
+  </div>
+  {
+    !data ? (
+      <p class="notice">{t(lang, 'governance.not_allowed')}</p>
+    ) : (
+      <>
+        <DataAsOf value={data.asOf} />
+        <form method="get" class="filters">
+          <input type="hidden" name="tab" value={tab} />
+          <div>
+            <label for="reform">{t(lang, 'views.filter_reform')}</label>
+            <select id="reform" name="reform">
+              <option value="">{t(lang, 'views.all')}</option>
+              {data.reforms.map((r) => <option value={r} selected={filter.reform === r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="status">{t(lang, 'governance.decision_status')}</label>
+            <select id="status" name="status">
+              {['open', 'implemented', 'closed', 'cancelled'].map((s) => <option value={s} selected={filter.status === s}>{data.label('decision_status', s)}</option>)}
+              <option value="all" selected={filter.status === 'all'}>{t(lang, 'views.all')}</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+
+        <ul class="stats" aria-label={t(lang, 'governance.summary_label')}>
+          <StatCard label={t(lang, 'governance.open_decisions')} value={statusCount('open')} href={link({ tab: 'decisions', status: null })} testId="open-decisions" />
+          <StatCard label={t(lang, 'governance.follow_ups_overdue')} value={followUpsOverdue} tone={followUpsOverdue > 0 ? 'red' : 'default'} testId="follow-ups-overdue" />
+          <StatCard
+            label={t(lang, 'governance.adaptations_approved')}
+            value={adaptationsApproved}
+            context={t(lang, 'governance.adaptations_context', { n: data.adaptations.length })}
+            href={link({ tab: 'adaptations' })}
+          />
+          <StatCard
+            label={t(lang, 'governance.next_review')}
+            value={nextReview ? formatDate(nextReview.review_date, lang) : t(lang, 'governance.not_scheduled')}
+            href={link({ tab: 'reviews' })}
+            testId="next-review"
+          />
+        </ul>
+
+        <LinkTabs
+          label={t(lang, 'governance.tabs_label')}
+          current={tab}
+          tabs={[
+            { key: 'decisions', label: t(lang, 'governance.tab_decisions'), count: data.decisions.length, href: link({ tab: 'decisions' }) },
+            { key: 'actions', label: t(lang, 'reviews.actions'), count: data.actions.length, href: link({ tab: 'actions' }) },
+            { key: 'adaptations', label: t(lang, 'governance.adaptations'), count: data.adaptations.length, href: link({ tab: 'adaptations' }) },
+            { key: 'raci', label: t(lang, 'governance.raci'), href: link({ tab: 'raci' }) },
+            { key: 'reviews', label: t(lang, 'governance.tab_reviews'), count: data.reviews.length, href: link({ tab: 'reviews' }) },
+          ]}
+        />
+
+        {tab === 'decisions' && (
+          <section aria-label={t(lang, 'governance.tab_decisions')}>
+            {data.decisions.length === 0 ? (
+              <EmptyState icon="governance" title={t(lang, 'governance.decisions_none_title')} message={t(lang, 'governance.decisions_none')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table quiet" data-testid="decisions">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="col-id">{t(lang, 'governance.col_id')}</th>
+                      <th scope="col">{t(lang, 'reviews.decision')}</th>
+                      <th scope="col" class="col-who">{t(lang, 'governance.who_decided')}</th>
+                      <th scope="col" class="col-due">{t(lang, 'governance.col_follow_up')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.decisions.map((d) => (
+                      <tr data-decision={d.decision_id} aria-current={openDecisionId === d.decision_id ? 'true' : undefined}>
+                        <td class="col-id">{d.decision_id}</td>
+                        <th scope="row" class="main-cell">
+                          <a class="row-title" href={link({ decision: d.decision_id })}>{d.summary}</a>
+                          <span class="row-sub">
+                            {data.label('decision_type', d.decision_type)} · {formatDate(d.decision_date, lang)} · {d.reforms.join(', ') || t(lang, 'reviews.programme_wide')}
+                            {d.status !== 'open' && (
+                              <>
+                                {' '}
+                                <span class="badge">{data.label('decision_status', d.status)}</span>
+                              </>
+                            )}
+                          </span>
+                        </th>
+                        <td class="col-who">{d.decision_maker ?? <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</td>
+                        <td class="col-due">
+                          {d.follow_up_due ? formatDate(d.follow_up_due, lang) : <span class="muted">{t(lang, 'governance.not_set')}</span>}
+                          {d.overdue && (
+                            <span class="late" data-testid="follow-up-overdue">
+                              {t(lang, 'reviews.overdue')}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p class="muted small-note">{t(lang, 'reviews.tiers')}</p>
+          </section>
+        )}
+
+        {tab === 'actions' && (
+          <section aria-label={t(lang, 'reviews.actions')}>
+            {data.actions.length === 0 ? (
+              <EmptyState icon="checklist" title={t(lang, 'governance.actions_none_title')} message={t(lang, 'reviews.actions_none')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table quiet" data-testid="actions">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="col-id">{t(lang, 'governance.col_id')}</th>
+                      <th scope="col">{t(lang, 'reviews.action')}</th>
+                      <th scope="col" class="col-who">{t(lang, 'reviews.owner')}</th>
+                      <th scope="col" class="col-due">{t(lang, 'reviews.due')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.actions.map((a) => (
+                      <tr>
+                        <td class="col-id">{a.action_id}</td>
+                        <th scope="row" class="main-cell">
+                          <span class="row-title-text">{a.description}</span>
+                          <span class="row-sub">
+                            {data.label('action_source', a.source_type)} {a.source_id} · {data.label('action_status', a.status)}
+                          </span>
+                        </th>
+                        <td class="col-who">{a.owner ?? <span class="muted">{t(lang, 'dq.no_owner')}</span>}</td>
+                        <td class="col-due">
+                          {a.due_date ? formatDate(a.due_date, lang) : <span class="muted">{t(lang, 'governance.not_set')}</span>}
+                          {a.overdue && <span class="late">{t(lang, 'reviews.overdue')}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === 'adaptations' && (
+          <section aria-label={t(lang, 'governance.adaptations')}>
+            {data.adaptations.length === 0 ? (
+              <EmptyState icon="returned" title={t(lang, 'governance.adaptations_none_title')} message={t(lang, 'governance.adaptations_none')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table quiet" data-testid="adaptations">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="col-id">{t(lang, 'governance.col_id')}</th>
+                      <th scope="col">{t(lang, 'governance.col_adaptation')}</th>
+                      <th scope="col" class="col-who">{t(lang, 'governance.col_linked')}</th>
+                      <th scope="col" class="col-state">{t(lang, 'reviews.status')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.adaptations.map((a) => {
+                      const state = adaptationState(a);
+                      return (
+                        <tr data-adaptation={a.adaptation_id} aria-current={openAdaptationId === a.adaptation_id ? 'true' : undefined}>
+                          <td class="col-id">{a.adaptation_id}</td>
+                          <th scope="row" class="main-cell">
+                            <a class="row-title" href={link({ adaptation: a.adaptation_id })}>{a.trigger_event}</a>
+                            <span class="row-sub">
+                              {triggerLabel(a.trigger_type) && <span class="row-type">{triggerLabel(a.trigger_type)}</span>}
+                              {t(lang, 'governance.change', { text: a.change_requested })}
+                            </span>
+                          </th>
+                          <td class="col-who">{a.links.join(', ') || <span class="muted">{t(lang, 'reviews.programme_wide')}</span>}</td>
+                          <td class="col-state">
+                            <span class={`pill pill-${state.tone}`}>{state.text}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === 'raci' && (
+          <section aria-label={t(lang, 'governance.raci')}>
+            {data.raci.length === 0 ? (
+              <EmptyState icon="people" title={t(lang, 'governance.raci_none_title')} message={t(lang, 'governance.raci_none')} />
+            ) : (
+              <>
+                <div class="raci-head">
+                  <nav class="seg" aria-label={t(lang, 'governance.raci_reform')}>
+                    {raciReforms.map((r) => (
+                      <a href={link({ raci: r ?? '' })} aria-current={raciReform === r ? 'page' : undefined}>
+                        {r ?? t(lang, 'reviews.programme_wide')}
+                      </a>
+                    ))}
+                  </nav>
+                  <p class="muted small-note">{t(lang, 'governance.raci_note')}</p>
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table quiet raci" data-testid="raci">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t(lang, 'governance.activity')}</th>
+                        <th scope="col">{t(lang, 'governance.responsible')}</th>
+                        <th scope="col">{t(lang, 'governance.accountable')}</th>
+                        <th scope="col">{t(lang, 'governance.consulted')}</th>
+                        <th scope="col">{t(lang, 'governance.informed')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.raci
+                        .filter((r) => r.reform_id === raciReform)
+                        .map((r) => (
+                          <tr>
+                            <th scope="row" class="main-cell">
+                              <span class="row-title-text">{r.activity}</span>
+                              {(r.review_forum || r.approval_gate) && <span class="row-sub">{[r.review_forum, r.approval_gate].filter(Boolean).join(' · ')}</span>}
+                            </th>
+                            <td>{r.responsible}</td>
+                            <td>{r.accountable}</td>
+                            <td>{r.consulted}</td>
+                            <td>{r.informed}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {tab === 'reviews' && (
+          <div class="reviews-grid">
+            <section class="card" aria-labelledby="calendar-title">
+              <h2 id="calendar-title">{t(lang, 'governance.calendar')}</h2>
+              {data.reviews.length === 0 ? (
+                <EmptyState icon="calendar" title={t(lang, 'governance.calendar_none_title')} message={t(lang, 'governance.calendar_none')} />
+              ) : (
+                <ol class="timeline" data-testid="calendar">
+                  {data.reviews.map((r) => (
+                    <li>
+                      <span class="when">
+                        <Icon name="calendar" />
+                        {formatDate(r.review_date, lang)}
+                      </span>
+                      <span>{r.title ?? t(lang, `reviews.type_${r.review_type}` as MessageKey)}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+            <section class="card" aria-labelledby="packs-title">
+              <h2 id="packs-title">{t(lang, 'governance.packs')}</h2>
+              {packs.length === 0 ? (
+                <EmptyState icon="reviews" title={t(lang, 'governance.packs_none_title')} message={t(lang, 'reviews.none_yet')} action={{ href: '/reviews', label: t(lang, 'governance.all_packs') }} />
+              ) : (
+                <>
+                  <ul class="packs">
+                    {packs.map((p) => (
+                      <li>
+                        <a href={`/reviews/${p.packId}`}>
+                          {reviewTypeLabel(lang, p.reviewType)}, {formatDate(p.reviewDate, lang)}
+                        </a>{' '}
+                        <span class="muted">{t(lang, 'governance.pack_version', { version: p.version })}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    <a href="/reviews">{t(lang, 'governance.all_packs')}</a>
+                  </p>
+                </>
+              )}
+            </section>
+          </div>
+        )}
+
+        {openDecisionId && !data.openDecision && (
+          <SidePanel title={openDecisionId} closeHref={link({ decision: null })}>
+            <p>{t(lang, 'governance.not_found')}</p>
+          </SidePanel>
+        )}
+        {data.openDecision && (
+          <SidePanel title={data.openDecision.decision_id} closeHref={link({ decision: null })}>
+            <p class="panel-lead">{data.openDecision.summary}</p>
+            <p class="panel-chips">
+              <span class="badge">{data.label('decision_type', data.openDecision.decision_type)}</span>
+              <span class="badge">{data.label('decision_status', data.openDecision.status)}</span>
+              {data.openDecision.reforms.map((r) => <ReformChip reformId={r} label={r} />)}
+            </p>
+            <dl class="panel-facts" data-testid="decision-facts">
+              <dt>{t(lang, 'governance.fact_date')}</dt>
+              <dd>{formatDate(data.openDecision.decision_date, lang)}</dd>
+              <dt>{t(lang, 'governance.who_decided')}</dt>
+              <dd>{[data.openDecision.decision_maker, data.openDecision.decision_body].filter(Boolean).join(', ') || <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'reviews.tier')}</dt>
+              <dd>{tier(data.openDecision.governance_tier)}</dd>
+              <dt>{t(lang, 'governance.fact_because')}</dt>
+              <dd>{data.openDecision.reason ?? <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'reviews.follow_up')}</dt>
+              <dd>{data.openDecision.follow_up_action ?? <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'reviews.owner')}</dt>
+              <dd>{data.openDecision.owner ?? <span class="muted">{t(lang, 'dq.no_owner')}</span>}</dd>
+              <dt>{t(lang, 'reviews.due')}</dt>
+              <dd>
+                {data.openDecision.follow_up_due ? formatDate(data.openDecision.follow_up_due, lang) : <span class="muted">{t(lang, 'governance.not_set')}</span>}
+                {data.openDecision.overdue && <span class="late">{t(lang, 'reviews.overdue')}</span>}
+              </dd>
+            </dl>
+          </SidePanel>
+        )}
+        {openAdaptationId && !openAdaptation && (
+          <SidePanel title={openAdaptationId} closeHref={link({ adaptation: null })}>
+            <p>{t(lang, 'governance.not_found')}</p>
+          </SidePanel>
+        )}
+        {openAdaptation && (
+          <SidePanel title={openAdaptation.adaptation_id} closeHref={link({ adaptation: null })}>
+            <p class="panel-lead">{openAdaptation.trigger_event}</p>
+            <p class="panel-chips">
+              <span class={`pill pill-${adaptationState(openAdaptation).tone}`}>{adaptationState(openAdaptation).text}</span>
+              {triggerLabel(openAdaptation.trigger_type) && <span class="badge">{triggerLabel(openAdaptation.trigger_type)}</span>}
+            </p>
+            <dl class="panel-facts" data-testid="adaptation-facts">
+              <dt>{t(lang, 'governance.fact_original')}</dt>
+              <dd>{openAdaptation.original_plan ?? <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'governance.fact_change')}</dt>
+              <dd>{openAdaptation.change_requested}</dd>
+              <dt>{t(lang, 'governance.fact_decision')}</dt>
+              <dd>
+                {adaptationState(openAdaptation).text}
+                {openAdaptation.change_approved === true && (openAdaptation.approved_by || openAdaptation.approval_date) && (
+                  <span class="muted">
+                    {' '}
+                    {t(lang, 'governance.approved_by', { by: openAdaptation.approved_by ?? '', date: openAdaptation.approval_date ? formatDate(openAdaptation.approval_date, lang) : '' })}
+                  </span>
+                )}
+              </dd>
+              <dt>{t(lang, 'governance.fact_why')}</dt>
+              <dd>{openAdaptation.rationale ?? <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'reviews.follow_up')}</dt>
+              <dd>{openAdaptation.follow_up_action ?? <span class="muted">{t(lang, 'governance.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'governance.col_linked')}</dt>
+              <dd>{openAdaptation.links.join(', ') || t(lang, 'reviews.programme_wide')}</dd>
+            </dl>
+          </SidePanel>
+        )}
+      </>
+    )
+  }
+</Base>
+
+<style>
+  .quiet .col-id {
+    width: 5.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .quiet .col-who {
+    width: 12rem;
+  }
+  .quiet .col-due {
+    width: 8.5rem;
+  }
+  .quiet .col-state {
+    width: 9rem;
+  }
+  .main-cell {
+    font-weight: var(--weight-normal);
+  }
+  .row-title,
+  .row-title-text {
+    display: block;
+    color: var(--color-text);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+  }
+  .row-title:hover,
+  .row-title:focus-visible {
+    text-decoration: underline;
+  }
+  .row-sub {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .row-type {
+    margin-right: var(--space-2);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-round);
+    background: var(--color-surface-hover);
+  }
+  .quiet tr[aria-current='true'] {
+    background: var(--color-accent-soft);
+  }
+  .late {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-rag-red);
+  }
+  .small-note {
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-sm);
+  }
+  .raci-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .raci-head .small-note {
+    margin: 0;
+  }
+  .seg {
+    display: flex;
+    gap: var(--space-1);
+    padding: 0.2rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .seg a {
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-round);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+    text-decoration: none;
+  }
+  .seg a[aria-current='page'] {
+    background: var(--color-forest);
+    color: var(--color-primary-contrast);
+  }
+  .reviews-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .reviews-grid h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-base);
+  }
+  .timeline {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-2);
+  }
+  .timeline li {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+  }
+  .when {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 8rem;
+    font-weight: var(--weight-bold);
+  }
+  .packs {
+    margin: 0 0 var(--space-3);
+    padding-left: var(--space-4);
+  }
+  .panel-lead {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    line-height: 1.4;
+  }
+  .panel-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-4);
+  }
+  .panel-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-3) var(--space-4);
+    margin: 0;
+    font-size: var(--text-md);
+  }
+  .panel-facts dt {
+    color: var(--color-text-muted);
+  }
+  .panel-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 767px) {
+    .quiet .col-who {
+      display: none;
+    }
+    .quiet .col-id {
+      width: 4.5rem;
+    }
+    .raci {
+      min-width: 40rem;
+    }
+  }
+</style>

@@ -1,0 +1,31 @@
+{
+  "rule": "B01",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "next_action": "Send the draft decree to the minister"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-1"
+      }
+    ],
+    "expect": {
+      "field": "milestone_id",
+      "value": "MS-1"
+    }
+  }
+}

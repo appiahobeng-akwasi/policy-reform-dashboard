@@ -1,0 +1,53 @@
+{
+  "rule": "Q22",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "adaptation",
+        "op": "create",
+        "id": "AD-005",
+        "fields": {
+          "trigger_event": "Minister asked for more consultation",
+          "change_requested": "Add two provincial consultations",
+          "change_approved": true,
+          "rationale": "Provinces must own the decree",
+          "approved_by": "Programme Director",
+          "approval_date": "2026-11-14"
+        },
+        "links": [
+          {
+            "object_type": "reform",
+            "object_id": "RA1"
+          }
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "adaptation",
+        "op": "create",
+        "id": "AD-005",
+        "fields": {
+          "trigger_event": "Minister asked for more consultation",
+          "change_requested": "Add two provincial consultations",
+          "change_approved": true,
+          "rationale": "Provinces must own the decree",
+          "approval_date": "2026-11-14"
+        },
+        "links": [
+          {
+            "object_type": "reform",
+            "object_id": "RA1"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "field": "approved_by"
+    }
+  }
+}

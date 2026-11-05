@@ -1,0 +1,69 @@
+---
+// Small line icons for the sidebar and top bar, drawn by hand as inline SVG (docs/08: nothing
+// downloaded, no icon font). Decorative: the link or button next to it carries the text.
+export type IconName = keyof typeof PATHS;
+interface Props {
+  name: IconName;
+}
+const PATHS = {
+  items: 'M4 6h16M4 12h16M4 18h10',
+  approvals: 'M5 12.5l4 4 10-10',
+  upload: 'M12 16V4m0 0l-4 4m4-4l4 4M5 20h14',
+  someone: 'M9 11a3 3 0 100-6 3 3 0 000 6zm-5 9a5 5 0 0110 0m3-11h4m-2-2v4',
+  reviews: 'M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5',
+  quality: 'M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6zm-3 9l2 2 4-4',
+  executive: 'M4 20V10m6 10V4m6 16v-7m4 7H3',
+  portfolio: 'M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z',
+  pathway: 'M5 19a2 2 0 100-4 2 2 0 000 4zm14-10a2 2 0 100-4 2 2 0 000 4zM7 17h6a3 3 0 000-6h-2a3 3 0 010-6h6',
+  risks: 'M12 4l9 16H3zm0 6v4m0 3v.5',
+  merl: 'M4 19l5-6 4 3 7-9M4 4v15h16',
+  governance: 'M12 3v18M5 7h14M7 7l-3 7a3 3 0 006 0zm10 0l-3 7a3 3 0 006 0zM8 21h8',
+  data: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+  people: 'M8 11a3 3 0 100-6 3 3 0 000 6zm8 0a3 3 0 100-6 3 3 0 000 6zM3 20a5 5 0 0110 0m-1-1a5 5 0 019 1',
+  jobs: 'M12 21a9 9 0 100-18 9 9 0 000 18zm0-13v4l3 2',
+  errors: 'M12 21a9 9 0 100-18 9 9 0 000 18zm0-13v5m0 3v.5',
+  bell: 'M6 16V11a6 6 0 0112 0v5l2 2H4zm4 4h4',
+  mail: 'M4 6h16v12H4zm0 1l8 6 8-6',
+  search: 'M11 18a7 7 0 100-14 7 7 0 000 14zm9 2l-4-4',
+  menu: 'M4 7h16M4 12h16M4 17h16',
+  close: 'M6 6l12 12M18 6L6 18',
+  account: 'M12 12a4 4 0 100-8 4 4 0 000 8zm-7 9a7 7 0 0114 0',
+  flag: 'M5 21V4m0 0h11l-2 4 2 4H5',
+  box: 'M4 8l8-4 8 4v8l-8 4-8-4zm0 0l8 4 8-4m-8 4v8',
+  checklist: 'M10 6h10M10 12h10M10 18h10M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2',
+  layers: 'M12 4l9 5-9 5-9-5zm-9 9l9 5 9-5',
+  paperclip: 'M20 11l-8 8a5 5 0 01-7-7l8-8a3.5 3.5 0 015 5l-8 8a2 2 0 01-3-3l7-7',
+  calendar: 'M5 5h14v15H5zM5 10h14M9 3v4m6-4v4',
+  check_circle: 'M12 21a9 9 0 100-18 9 9 0 000 18zm-4-9l3 3 5-6',
+  returned: 'M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3',
+  plus: 'M12 5v14M5 12h14',
+  help: 'M12 21a9 9 0 100-18 9 9 0 000 18zm-2.5-11.5a2.5 2.5 0 115 .5c0 1.5-2.5 2-2.5 3.5m0 3v.5',
+  chevron_down: 'M6 9l6 6 6-6',
+  chevron_up: 'M6 15l6-6 6 6',
+  arrow_left: 'M19 12H5m0 0l6-6m-6 6l6 6',
+  arrow_right: 'M5 12h14m0 0l-6-6m6 6l-6 6',
+  external: 'M14 4h6v6m0-6l-9 9M18 14v5H5V6h5',
+  copy: 'M9 9h11v11H9zM5 15V4h11',
+  file: 'M7 3h7l4 4v14H7zM14 3v4h4',
+  warning: 'M12 4l9 16H3zm0 6v4m0 3v.5',
+  clock: 'M12 21a9 9 0 100-18 9 9 0 000 18zm0-13v4l3 2',
+  keyboard: 'M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8',
+  rule: 'M9 12l2 2 4-4M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6z',
+  land: 'M3 18l5-9 4 6 3-4 6 7zM8 6a2 2 0 100-4 2 2 0 000 4z',
+  coin: 'M12 21a9 9 0 100-18 9 9 0 000 18zm0-13v8m-3-5h4.5a1.5 1.5 0 010 3H9',
+  sprout: 'M12 21v-9m0 3c-4 0-7-3-7-7 4 0 7 3 7 7zm0-2c4 0 7-3 7-7-4 0-7 3-7 7z',
+  globe: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z',
+  admin: 'M12 15a3 3 0 100-6 3 3 0 000 6zm7-3l2-1-2-4-2 1-2-1.5V4h-4v2.5L9 8 7 7 5 11l2 1v2l-2 1 2 4 2-1 2 1.5V20h4v-2.5l2-1.5 2 1 2-4-2-1z',
+} as const;
+const { name } = Astro.props;
+---
+
+<svg class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+  <path d={PATHS[name]} fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+
+<style>
+  .icon {
+    flex: none;
+  }
+</style>

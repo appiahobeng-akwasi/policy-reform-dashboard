@@ -1,0 +1,138 @@
+---
+// Scheduled jobs (build step 12): when each last ran, what it did, and any failure, with Run now
+// for the demo and for catching up after downtime. Admins only. The scheduler itself runs
+// `npm run jobs` or calls POST /api/jobs/<name> (decision 50).
+import Base from '../../layouts/Base.astro';
+import { formatDate, formatDateTime, t, type MessageKey } from '../../i18n';
+import { ADMIN_ROLES } from '../../lib/admin/users';
+import { env } from '../../lib/env';
+import { isJob, JOBS, runJob } from '../../lib/jobs/run';
+import { createMailer } from '../../lib/platform/smtp-email';
+import { asUser } from '../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin%2Fjobs', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+
+if (allowed && Astro.request.method === 'POST') {
+  const job = (await Astro.request.formData()).get('job');
+  if (isJob(job)) {
+    const result = await runJob(job, { triggeredBy: 'admin', userId: user.userId, mailer: createMailer() });
+    return Astro.redirect(`/admin/jobs?ran=${result.jobRunId}`, 303);
+  }
+}
+
+type Run = { job_run_id: string; job: string; run_for: string; started_at: string; status: string; counts: Record<string, number> | null; error: string | null; by: string | null };
+const runs = allowed
+  ? await asUser(user.claims, async (db) => {
+      const { rows } = await db.query<Run>(
+        `select r.job_run_id, r.job, r.run_for, r.started_at::text, r.status, r.counts, r.error, p.full_name as by
+           from job_runs r left join app_users u on u.user_id = r.triggered_by_user left join people p on p.person_id = u.person_id
+          order by r.started_at desc limit 50`,
+      );
+      return rows;
+    })
+  : null;
+const ran = Astro.url.searchParams.get('ran');
+const justRan = runs?.find((r) => r.job_run_id === ran) ?? null;
+const emailOn = env.smtp !== null;
+const countText = (key: string, n: number) => {
+  try {
+    return t(lang, `jobs.count_${key}` as MessageKey, { n });
+  } catch {
+    return `${key}: ${n}`;
+  }
+};
+const countsText = (counts: Record<string, number> | null) =>
+  Object.entries(counts ?? {})
+    .filter(([key, n]) => n > 0 || key === 'emails_disabled')
+    .map(([key, n]) => countText(key, n))
+    .join('; ') || t(lang, 'jobs.nothing_to_do');
+---
+
+<Base title={t(lang, 'jobs.title')}>
+  <h1>{t(lang, 'jobs.title')}</h1>
+  {
+    !runs ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        <p>{t(lang, 'jobs.intro')}</p>
+        <p class={emailOn ? 'notice' : 'error'} data-testid="email-status">
+          {emailOn ? t(lang, 'jobs.email_on') : t(lang, 'jobs.email_off')}
+        </p>
+        {justRan && (
+          <p class={justRan.status === 'failed' ? 'error' : 'notice'} role="status" data-testid="ran">
+            {t(lang, `jobs.ran_${justRan.status}` as MessageKey, { job: t(lang, `jobs.job_${justRan.job}` as MessageKey) })} {countsText(justRan.counts)}
+          </p>
+        )}
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">{t(lang, 'jobs.job')}</th>
+                <th scope="col">{t(lang, 'jobs.when_scheduled')}</th>
+                <th scope="col">{t(lang, 'jobs.run_now')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {JOBS.map((job) => (
+                <tr>
+                  <th scope="row">{t(lang, `jobs.job_${job}` as MessageKey)}</th>
+                  <td>{t(lang, `jobs.schedule_${job}` as MessageKey)}</td>
+                  <td>
+                    <form method="post">
+                      <input type="hidden" name="job" value={job} />
+                      <button class="button button-quiet" type="submit" data-job={job}>
+                        {t(lang, 'jobs.run_now')}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <h2>{t(lang, 'jobs.history')}</h2>
+        {runs.length === 0 ? (
+          <p>{t(lang, 'jobs.history_none')}</p>
+        ) : (
+          <div class="table-wrap">
+            <table class="data-table" data-testid="job-runs">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'dq.when')}</th>
+                  <th scope="col">{t(lang, 'jobs.job')}</th>
+                  <th scope="col">{t(lang, 'jobs.for_day')}</th>
+                  <th scope="col">{t(lang, 'dq.outcome')}</th>
+                  <th scope="col">{t(lang, 'jobs.what_it_did')}</th>
+                  <th scope="col">{t(lang, 'jobs.started_by')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((r) => (
+                  <tr data-status={r.status}>
+                    <td>{formatDateTime(r.started_at, lang)}</td>
+                    <td>{t(lang, `jobs.job_${r.job}` as MessageKey)}</td>
+                    <td>{formatDate(r.run_for, lang)}</td>
+                    <td>{t(lang, `jobs.status_${r.status}` as MessageKey)}</td>
+                    <td>{r.status === 'failed' ? r.error : countsText(r.counts)}</td>
+                    <td>{r.by ?? t(lang, 'jobs.by_schedule')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+</Base>
+
+<style>
+  h2 {
+    margin-top: var(--space-8);
+  }
+</style>

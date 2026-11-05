@@ -1,0 +1,102 @@
+---
+// Review packs (build step 13): every pack prepared, newest first, and Prepare a pack for admins.
+// Internal users read them; government counterparts do not (decision 55).
+import Base from '../../layouts/Base.astro';
+import { formatDate, formatDateTime, t } from '../../i18n';
+import { ADMIN_ROLES } from '../../lib/admin/users';
+import { isReviewType, listPacks, prepare, REVIEW_TYPES } from '../../lib/reviews/pack';
+import { reviewTypeLabel } from '../../lib/reviews/render';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Freviews', 303);
+const internal = user.role !== 'viewer_counterpart';
+const isAdmin = ADMIN_ROLES.includes(user.role);
+
+let problem: string | null = null;
+if (isAdmin && Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const type = form.get('review_type');
+  const date = String(form.get('review_date') ?? '');
+  if (!isReviewType(type)) problem = 'type';
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) problem = 'date';
+  else {
+    const { packId } = await prepare(user.claims, user.userId, type, date);
+    return Astro.redirect(`/reviews/${packId}?prepared=1`, 303);
+  }
+}
+const packs = internal ? await listPacks(user.claims) : [];
+// Kinshasa today, as the default review date.
+const today = new Date(Date.now() + 3_600_000).toISOString().slice(0, 10);
+---
+
+<Base title={t(lang, 'reviews.title')}>
+  <h1>{t(lang, 'reviews.title')}</h1>
+  {
+    !internal ? (
+      <p class="notice">{t(lang, 'reviews.not_allowed')}</p>
+    ) : (
+      <>
+        <p>{t(lang, 'reviews.intro')}</p>
+        {isAdmin && (
+          <form method="post" class="filters" data-testid="prepare">
+            <div>
+              <label for="review_type">{t(lang, 'reviews.type')}</label>
+              <select id="review_type" name="review_type">
+                {REVIEW_TYPES.map((r) => <option value={r}>{reviewTypeLabel(lang, r)}</option>)}
+              </select>
+            </div>
+            <div>
+              <label for="review_date">{t(lang, 'reviews.review_date')}</label>
+              <input id="review_date" name="review_date" type="date" value={today} required />
+            </div>
+            <button class="button" type="submit">{t(lang, 'reviews.prepare_button')}</button>
+          </form>
+        )}
+        {problem && (
+          <p class="error" role="alert">
+            {t(lang, problem === 'type' ? 'reviews.problem_type' : 'reviews.problem_date')}
+          </p>
+        )}
+        {isAdmin && <p class="muted">{t(lang, 'reviews.prepare_hint')}</p>}
+        {packs.length === 0 ? (
+          <p>{t(lang, 'reviews.none_yet')}</p>
+        ) : (
+          <div class="table-wrap">
+            <table class="data-table" data-testid="packs">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'reviews.review_date')}</th>
+                  <th scope="col">{t(lang, 'reviews.type')}</th>
+                  <th scope="col" class="number">{t(lang, 'reviews.version')}</th>
+                  <th scope="col">{t(lang, 'reviews.prepared')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {packs.map((p) => (
+                  <tr>
+                    <td>
+                      <a href={`/reviews/${p.packId}`}>{formatDate(p.reviewDate, lang)}</a>
+                    </td>
+                    <td>{reviewTypeLabel(lang, p.reviewType)}</td>
+                    <td class="number">{p.version}</td>
+                    <td>
+                      {formatDateTime(p.generatedAt, lang)}, {p.generatedBy}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+</Base>
+
+<style>
+  input[type='date'] {
+    font: inherit;
+    min-height: 2.75rem;
+    padding: var(--space-2);
+  }
+</style>

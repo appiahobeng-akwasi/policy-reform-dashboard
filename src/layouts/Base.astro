@@ -1,0 +1,321 @@
+---
+// The app shell (docs/08 v0.2 section 2): left sidebar, top bar with search and the page's primary
+// action, then the page; on phones, a floating tab bar. Focus mode (decision 84) is for one task,
+// such as the update card: no sidebar or tab bar, just the mark, the language switch and a close
+// button (Esc too) back to where you came from. Signed-out pages, and admins who have not finished the authenticator
+// step, get a plain centred page instead (no menu: there is nothing they may open yet).
+import '../styles/global.css';
+import AuthBrand from '../components/AuthBrand.astro';
+import BrandMark from '../components/BrandMark.astro';
+import Icon from '../components/Icon.astro';
+import LanguageSwitch from '../components/LanguageSwitch.astro';
+import Sidebar from '../components/Sidebar.astro';
+import TopBar from '../components/TopBar.astro';
+import { t } from '../i18n';
+import { needsMfa } from '../lib/auth/access';
+import { env } from '../lib/env';
+import { accessFor, shellCounts } from '../lib/shell';
+
+interface Props {
+  title: string;
+  /** The page's main action, shown on the right of the top bar ("Upload", "Send update"). */
+  action?: { href: string; label: string } | undefined;
+  /** One task on its own page: where the close button goes back to. */
+  focus?: { closeHref: string } | undefined;
+  /** The sign-in pages (decision 90): full screen, the programme's brand panel beside the form. */
+  variant?: 'auth' | undefined;
+}
+
+const { title, action, focus, variant } = Astro.props;
+const { lang, user } = Astro.locals;
+const shell = user && !needsMfa(user);
+const access = user ? accessFor(user.role) : null;
+const counts = shell && access ? await shellCounts(user.claims, access) : { approvals: 0, unread: 0, started: null };
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} · {t(lang, 'app.name')}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">{t(lang, 'nav.skip_to_content')}</a>
+    {
+      env.demoData && (
+        <p class="demo-notice" role="note" data-testid="demo-notice">
+          {t(lang, 'app.demo_notice')}
+        </p>
+      )
+    }
+    {
+      shell && access && focus ? (
+        <div class="focus">
+          <header class="focus-top">
+            <a class="focus-brand" href="/my-items">
+              <BrandMark />
+              <span>{t(lang, 'app.short_name')}</span>
+            </a>
+            <div class="focus-tools">
+              <LanguageSwitch />
+              <a class="focus-close" href={focus.closeHref} data-panel-close aria-label={t(lang, 'panel.close')} title={t(lang, 'panel.close')}>
+                <Icon name="close" />
+              </a>
+            </div>
+          </header>
+          <main id="main" class="focus-main">
+            <slot />
+          </main>
+          <footer class="site-footer focus-footer">
+            <p>{t(lang, 'app.programme')}</p>
+          </footer>
+        </div>
+      ) : shell && access ? (
+        <div class="shell">
+          <Sidebar access={access} approvals={counts.approvals} started={counts.started} />
+          <div class="main">
+            <TopBar access={access} unread={counts.unread} approvals={counts.approvals} action={action} />
+            <main id="main" class="content">
+              <slot />
+            </main>
+            <footer class="site-footer">
+              <p>{t(lang, 'app.programme')}</p>
+            </footer>
+          </div>
+        </div>
+      ) : variant === 'auth' && !shell ? (
+        <div class="auth">
+          <AuthBrand />
+          <div class="auth-side">
+            <header class="auth-tools">
+              {user && (
+                <form method="post" action="/auth/sign-out">
+                  <button class="btn btn-ghost" type="submit">
+                    {t(lang, 'auth.sign_out')}
+                  </button>
+                </form>
+              )}
+              <LanguageSwitch />
+            </header>
+            <main id="main" class="auth-main">
+              <slot />
+            </main>
+            <footer class="auth-foot">
+              <p>{t(lang, 'auth.trouble')}</p>
+            </footer>
+          </div>
+        </div>
+      ) : (
+        <div class="plain">
+          <header class="plain-top">
+            <a class="plain-brand" href="/">
+              {t(lang, 'app.name')} <span class="badge">{t(lang, 'app.prototype_badge')}</span>
+            </a>
+            <div class="plain-tools">
+              {!user && Astro.url.pathname !== '/sign-in' && (
+                <a class="btn btn-secondary" href="/sign-in">
+                  {t(lang, 'auth.sign_in')}
+                </a>
+              )}
+              {user && (
+                <form method="post" action="/auth/sign-out">
+                  <button class="btn btn-secondary" type="submit">
+                    {t(lang, 'auth.sign_out')}
+                  </button>
+                </form>
+              )}
+              <LanguageSwitch />
+            </div>
+          </header>
+          <main id="main" class="plain-main">
+            <slot />
+          </main>
+          <footer class="site-footer">
+            <p>{t(lang, 'app.programme')}</p>
+          </footer>
+        </div>
+      )
+    }
+    <script>
+      import '../scripts/shell';
+    </script>
+  </body>
+</html>
+
+<style>
+  .shell {
+    display: flex;
+    min-height: 100vh;
+  }
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .content {
+    flex: 1;
+    width: 100%;
+    max-width: 90rem;
+    padding: var(--space-6) var(--space-8) var(--space-8);
+  }
+  .site-footer {
+    padding: var(--space-4) var(--space-8);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .site-footer p {
+    margin: 0;
+  }
+  .focus {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .focus-top {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-8);
+    background: rgb(242 244 240 / 85%);
+    backdrop-filter: blur(12px);
+  }
+  .focus-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-text);
+    font-weight: var(--weight-bold);
+    text-decoration: none;
+  }
+  .focus-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .focus-close {
+    display: inline-grid;
+    place-items: center;
+    width: var(--control-height);
+    height: var(--control-height);
+    border-radius: 50%;
+    color: var(--color-text);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .focus-main {
+    flex: 1;
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: var(--space-4) var(--space-6) var(--space-8);
+  }
+  .focus-footer {
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: var(--space-4) var(--space-6);
+  }
+  /* Sign-in pages: brand panel on the left (55%), the form centred on the right. */
+  .auth {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    min-height: 100vh;
+    background: var(--color-surface);
+  }
+  .auth-side {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: var(--space-6) clamp(var(--space-6), 4vw, 4rem);
+  }
+  .auth-tools {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .auth-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: 100%;
+    max-width: 24rem;
+    margin: var(--space-8) auto;
+  }
+  .auth-foot {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    text-align: center;
+  }
+  .auth-foot p {
+    margin: 0;
+  }
+  @media (max-width: 767px) {
+    .auth {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+    .auth-side {
+      padding: var(--space-4);
+    }
+    .auth-main {
+      margin: var(--space-4) auto var(--space-8);
+    }
+  }
+  .plain {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .plain-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+  }
+  .plain-brand {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-text);
+    font-weight: var(--weight-bold);
+    text-decoration: none;
+  }
+  .plain-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .plain-main {
+    flex: 1;
+    width: 100%;
+    max-width: 28rem;
+    margin: var(--space-8) auto;
+    padding: 0 var(--space-4);
+  }
+  @media (max-width: 767px) {
+    .content,
+    .focus-main {
+      padding: var(--space-4);
+    }
+    .focus-top {
+      padding: var(--space-2) var(--space-4);
+    }
+    .site-footer {
+      padding: var(--space-4) var(--space-4) calc(var(--tabbar-height) + var(--space-8));
+    }
+    .plain-main {
+      margin-top: var(--space-4);
+    }
+  }
+</style>

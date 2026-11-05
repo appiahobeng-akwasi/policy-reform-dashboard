@@ -1,0 +1,644 @@
+---
+// Pathway view (spec 01 section 8, decision 89): where each reform is in its eight-stage journey,
+// and the drill down reform → workstream → deliverable → activity → milestone with each item's
+// rating, owner, due date and next action. Server-rendered; the drill down uses <details> and a
+// stage opens in the side panel by its address (?stage=…), so there is no page JavaScript.
+// Filters by link: reform (pills), rating, status, owner (form).
+import DeliveryTable from '../components/DeliveryTable.astro';
+import Icon from '../components/Icon.astro';
+import PathwayBoard from '../components/PathwayBoard.astro';
+import PathwayStepper from '../components/PathwayStepper.astro';
+import RagPill from '../components/RagPill.astro';
+import ReformChip from '../components/ReformChip.astro';
+import SampleBadge from '../components/SampleBadge.astro';
+import SidePanel from '../components/SidePanel.astro';
+import Base from '../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../i18n';
+import { nextEscalation, orderLeaves, pathwayLink, position, stageState, type Position, type StageState } from '../lib/pathway';
+import { asUser } from '../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fpathway', 303);
+const params = Astro.url.searchParams;
+const filter = {
+  reform: params.get('reform') || null,
+  rag: params.get('rag') || null,
+  status: params.get('status') || null,
+  owner: params.get('owner') || null,
+};
+const openStageId = params.get('stage');
+const filtering = Boolean(filter.rag || filter.status || filter.owner);
+
+type Item = {
+  object_type: string;
+  object_id: string;
+  reform_id: string | null;
+  name: string;
+  status: string;
+  due_date: string | null;
+  rag: string;
+  days_overdue: number;
+  days_to_due: number | null;
+  next_action: string | null;
+  owner_person_id: string | null;
+  owner_name: string | null;
+  workstream_id: string | null;
+  deliverable_id: string | null;
+  is_sample: boolean;
+};
+type Stage = {
+  stage_record_id: string;
+  reform_id: string;
+  stage: string;
+  label_en: string;
+  label_fr: string;
+  status: string;
+  entry_date: string | null;
+  exit_date: string | null;
+  responsible: string | null;
+  validation_status: string;
+  escalation_needed: boolean;
+  escalation_to: string | null;
+  evidence: number;
+  stalled: boolean;
+};
+
+const data = await asUser(user.claims, async (db) => {
+  const reforms = await db.query<{ reform_id: string; name_en: string; name_fr: string | null }>('select reform_id, name_en, name_fr from reforms order by reform_id');
+  const stages = await db.query<Stage>(
+    `select s.stage_record_id, s.reform_id, s.stage, ps.label_en, ps.label_fr, s.status, s.entry_date, s.exit_date,
+            coalesce(p.full_name, s.responsible_text) as responsible, s.validation_status, s.escalation_needed, s.escalation_to,
+            (select count(*)::int from evidence_links l where l.object_type = 'reform_stage' and l.object_id = s.stage_record_id) as evidence,
+            exists (select 1 from escalations e where e.object_type = 'reform_stage' and e.object_id = s.stage_record_id
+                       and e.reason = 'pathway_stalled' and e.resolved_at is null) as stalled
+       from reform_stages s join pathway_stages ps on ps.code = s.stage left join people p on p.person_id = s.responsible_person_id
+      order by s.reform_id, ps.sort_order`,
+  );
+  const items = await db.query<Item>(
+    `select f.object_type, f.object_id, f.reform_id, f.name, f.status, f.due_date, f.rag, f.days_overdue, f.days_to_due, f.next_action,
+            f.owner_person_id::text, p.full_name as owner_name, f.workstream_id, f.deliverable_id, f.is_sample
+       from v_delivery_flags f left join people p on p.person_id = f.owner_person_id
+      order by f.due_date nulls last, f.object_id`,
+  );
+  const labels = await db.query<{ list_name: string; code: string; label_en: string; label_fr: string }>(
+    "select list_name, code, label_en, label_fr from lookup_values where list_name in ('rag', 'delivery_status', 'stage_status', 'validation_status') order by sort_order",
+  );
+  return { reforms: reforms.rows, stages: stages.rows, items: items.rows, labels: labels.rows };
+});
+
+const label = (list: string, code: string) => {
+  const l = data.labels.find((x) => x.list_name === list && x.code === code);
+  return l ? (lang === 'fr' ? l.label_fr : l.label_en) : code;
+};
+const ragLabel = (rag: string) => label('rag', rag);
+const stageName = (s: Stage) => (lang === 'fr' ? s.label_fr : s.label_en);
+const reformName = (r: { name_en: string; name_fr: string | null }) => (lang === 'fr' && r.name_fr ? r.name_fr : r.name_en);
+const stageHref = (s: Stage) => pathwayLink(params, { stage: s.stage_record_id });
+const stagesOf = (reformId: string) => data.stages.filter((s) => s.reform_id === reformId);
+const statesOf = (reformId: string): StageState[] => stagesOf(reformId).map((s) => stageState(s.status));
+const list = new Intl.ListFormat(lang === 'fr' ? 'fr' : 'en-GB', { type: 'conjunction' });
+const positionText = (p: Position) =>
+  p.kind === 'complete'
+    ? t(lang, 'views.pw_at_complete', { total: p.total })
+    : p.kind === 'not_started'
+      ? t(lang, 'views.pw_at_none')
+      : p.numbers.length === 1
+        ? t(lang, 'views.pw_at_one', { n: p.numbers[0]!, total: p.total })
+        : t(lang, 'views.pw_at_many', { list: list.format(p.numbers.map(String)), total: p.total });
+const stageDate = (s: Stage) =>
+  s.entry_date && s.exit_date
+    ? t(lang, 'views.stage_dates', { entry: formatDate(s.entry_date, lang, 'short'), exit: formatDate(s.exit_date, lang, 'short') })
+    : s.entry_date && s.status !== 'not_started'
+      ? t(lang, 'views.pw_since', { date: formatDate(s.entry_date, lang, 'short') })
+      : null;
+
+const shownReforms = data.reforms.filter((r) => !filter.reform || r.reform_id === filter.reform);
+const matches = (i: Item) =>
+  (!filter.rag || i.rag === filter.rag) && (!filter.status || i.status === filter.status) && (!filter.owner || i.owner_person_id === filter.owner);
+// An item is shown if it matches, or if something under it matches (so the path to it stays visible).
+const under = (i: Item): Item[] =>
+  i.object_type === 'workstream'
+    ? data.items.filter((x) => x.workstream_id === i.object_id && x.object_id !== i.object_id)
+    : i.object_type === 'deliverable'
+      ? data.items.filter((x) => x.deliverable_id === i.object_id && x.object_id !== i.object_id)
+      : [];
+const visible = (i: Item): boolean => !filtering || matches(i) || under(i).some(visible);
+const owners = [...new Map(data.items.filter((i) => i.owner_person_id).map((i) => [i.owner_person_id!, i.owner_name ?? ''])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+const typeLabel = (type: string) => t(lang, `items.type_${type}` as MessageKey);
+const isLeaf = (i: Item) => i.object_type === 'activity' || i.object_type === 'milestone';
+const counts = (leaves: Item[]) => ({ open: leaves.filter((x) => x.status !== 'complete').length, overdue: leaves.filter((x) => x.days_overdue > 0).length });
+const programme = orderLeaves(data.items.filter((i) => i.object_type === 'milestone' && i.reform_id === null && visible(i)));
+
+const boardRows = data.reforms.map((r) => ({
+  reformId: r.reform_id,
+  position: positionText(position(statesOf(r.reform_id))),
+  cells: stagesOf(r.reform_id).map((s) => ({
+    code: s.stage,
+    label: stageName(s),
+    state: stageState(s.status),
+    statusLabel: label('stage_status', s.status),
+    escalation: s.escalation_needed && s.status !== 'complete',
+    href: stageHref(s),
+  })),
+}));
+const boardStageLabels = stagesOf(data.reforms[0]?.reform_id ?? '').map(stageName);
+
+const openStage = openStageId ? (data.stages.find((s) => s.stage_record_id === openStageId) ?? null) : null;
+const openStageNumber = openStage ? stagesOf(openStage.reform_id).findIndex((s) => s.stage_record_id === openStage.stage_record_id) + 1 : 0;
+const closeHref = pathwayLink(params, { stage: null });
+const reformLink = (reform: string | null) => pathwayLink(params, { reform, stage: null });
+---
+
+<Base title={t(lang, 'views.pathway_title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'views.pathway_title')}</h1>
+    <p>{t(lang, 'views.pathway_question')}</p>
+  </div>
+
+  <div class="pw-toolbar">
+    <nav class="pw-pills" aria-label={t(lang, 'views.filter_reform')}>
+      <a href={reformLink(null)} aria-current={filter.reform ? undefined : 'page'}>{t(lang, 'views.all')}</a>
+      {data.reforms.map((r) => <a href={reformLink(r.reform_id)} aria-current={filter.reform === r.reform_id ? 'page' : undefined}>{r.reform_id}</a>)}
+    </nav>
+    <form method="get" class="pw-filters" aria-label={t(lang, 'views.pw_filters')}>
+      {filter.reform && <input type="hidden" name="reform" value={filter.reform} />}
+      <div class="pw-field">
+        <label for="pw-rag">{t(lang, 'views.filter_rag')}</label>
+        <select id="pw-rag" name="rag">
+          <option value="">{t(lang, 'views.all')}</option>
+          {data.labels.filter((l) => l.list_name === 'rag').map((l) => <option value={l.code} selected={filter.rag === l.code}>{label('rag', l.code)}</option>)}
+        </select>
+      </div>
+      <div class="pw-field">
+        <label for="pw-status">{t(lang, 'views.filter_status')}</label>
+        <select id="pw-status" name="status">
+          <option value="">{t(lang, 'views.all')}</option>
+          {data.labels.filter((l) => l.list_name === 'delivery_status').map((l) => <option value={l.code} selected={filter.status === l.code}>{label('delivery_status', l.code)}</option>)}
+        </select>
+      </div>
+      <div class="pw-field">
+        <label for="pw-owner">{t(lang, 'views.filter_owner')}</label>
+        <select id="pw-owner" name="owner">
+          <option value="">{t(lang, 'views.all')}</option>
+          {owners.map(([id, name]) => <option value={id} selected={filter.owner === id}>{name}</option>)}
+        </select>
+      </div>
+      <button class="btn btn-secondary" type="submit">{t(lang, 'views.apply')}</button>
+    </form>
+  </div>
+
+  {data.reforms.length > 1 && <PathwayBoard stageLabels={boardStageLabels} rows={boardRows} />}
+
+  {
+    shownReforms.map((reform) => {
+      const stages = stagesOf(reform.reform_id);
+      const steps = stages.map((s) => ({ stage: s, state: stageState(s.status) }));
+      const underWay = steps.filter((s) => s.state === 'current' || s.state === 'blocked');
+      const next = nextEscalation(steps.map((s) => ({ ...s, escalationNeeded: s.stage.escalation_needed })));
+      const workstreams = data.items.filter((i) => i.reform_id === reform.reform_id && i.object_type === 'workstream' && visible(i));
+      const looseMilestones = orderLeaves(data.items.filter((i) => i.reform_id === reform.reform_id && i.object_type === 'milestone' && !i.deliverable_id && visible(i)));
+      const leaves = data.items.filter((i) => i.reform_id === reform.reform_id && isLeaf(i) && visible(i));
+      const tally = counts(leaves);
+      const hasSample = data.items.some((i) => i.reform_id === reform.reform_id && i.is_sample);
+      const anyStructure = data.items.some((i) => i.reform_id === reform.reform_id && i.object_type === 'workstream');
+      return (
+        <section class="reform" data-reform={reform.reform_id} id={`reform-${reform.reform_id}`} aria-labelledby={`title-${reform.reform_id}`}>
+          <header class="reform-head">
+            <h2 class="reform-title" id={`title-${reform.reform_id}`}>
+              <ReformChip reformId={reform.reform_id} label={reform.reform_id} />
+              <span>{reformName(reform)}</span>
+            </h2>
+            <p class="reform-position" data-testid="position">{positionText(position(steps.map((s) => s.state)))}</p>
+          </header>
+          {hasSample && <p class="notice">{t(lang, 'views.sample_note')}</p>}
+
+          <PathwayStepper
+            label={t(lang, 'views.stage_track_label', { reform: reform.reform_id })}
+            steps={steps.map(({ stage: s, state }) => ({
+              code: s.stage,
+              label: stageName(s),
+              state,
+              statusLabel: label('stage_status', s.status),
+              date: stageDate(s),
+              escalation: s.escalation_needed && s.status !== 'complete',
+              href: stageHref(s),
+            }))}
+          />
+
+          {underWay.length > 0 && (
+            <div class="under-way" aria-label={t(lang, 'views.pw_in_progress_title')} role="group">
+              {underWay.map(({ stage: s, state }) => (
+                <a class="now-card" href={stageHref(s)} data-now-stage={s.stage}>
+                  <span class="now-head">
+                    <span class="now-name">{stageName(s)}</span>
+                    <span class={`pill ${state === 'blocked' ? 'pill-red' : 'pill-green'}`}>{label('stage_status', s.status)}</span>
+                  </span>
+                  <span class="now-meta">
+                    {[s.entry_date ? t(lang, 'views.pw_since', { date: formatDate(s.entry_date, lang) }) : null, s.responsible].filter(Boolean).join(' · ')}
+                  </span>
+                  <span class="now-meta">
+                    {t(lang, 'views.validation', { status: label('validation_status', s.validation_status) })} · {t(lang, 'views.evidence_count', { n: s.evidence })}
+                  </span>
+                  {s.stalled && <span class="now-warn" data-testid="stalled">{t(lang, 'views.stage_stalled')}</span>}
+                  {s.escalation_needed && <span class="now-warn">{t(lang, 'views.escalation_needed', { to: s.escalation_to ?? '' })}</span>}
+                </a>
+              ))}
+            </div>
+          )}
+          {next && (
+            <p class="next-escalation" data-testid="next-escalation">
+              <span class="next-icon" aria-hidden="true"><Icon name="warning" /></span>
+              {t(lang, 'views.pw_next_escalation', { stage: stageName(next.stage), to: next.stage.escalation_to ?? '' })}
+            </p>
+          )}
+
+          <div class="delivery">
+            <div class="delivery-head">
+              <h3>{t(lang, 'views.delivery')}</h3>
+              {leaves.length > 0 && <span class="delivery-counts">{t(lang, 'views.pw_counts', tally)}</span>}
+            </div>
+            {!anyStructure && <p class="meta">{t(lang, 'views.no_structure')}</p>}
+            {filtering && workstreams.length === 0 && looseMilestones.length === 0 && <p>{t(lang, 'views.no_match')}</p>}
+            {workstreams.map((ws) => (
+              <details class="level group" open>
+                <summary class="group-row">
+                  <span class="group-id">{ws.object_id}</span>
+                  <span class="group-name">
+                    <span class="group-type">{typeLabel('workstream')}</span>
+                    <a href={`/items/workstream/${ws.object_id}`}>{ws.name}</a>
+                    {ws.is_sample && <SampleBadge />}
+                  </span>
+                  <span class="group-meta">{ws.owner_name ?? t(lang, 'views.no_owner')}</span>
+                  <RagPill rag={ws.rag} label={ragLabel(ws.rag)} />
+                </summary>
+                {data.items
+                  .filter((d) => d.object_type === 'deliverable' && d.workstream_id === ws.object_id && visible(d))
+                  .map((d) => (
+                    <details class="level group group-inner" open={filtering}>
+                      <summary class="group-row">
+                        <span class="group-id">{d.object_id}</span>
+                        <span class="group-name">
+                          <span class="group-type">{typeLabel('deliverable')}</span>
+                          <a href={`/items/deliverable/${d.object_id}`}>{d.name}</a>
+                          {d.is_sample && <SampleBadge />}
+                        </span>
+                        <span class="group-meta">{d.owner_name ?? t(lang, 'views.no_owner')}</span>
+                        <RagPill rag={d.rag} label={ragLabel(d.rag)} />
+                      </summary>
+                      <div class="group-body">
+                        <DeliveryTable
+                          rows={orderLeaves(data.items.filter((x) => isLeaf(x) && x.deliverable_id === d.object_id && visible(x)))}
+                          ragLabel={ragLabel}
+                          showType
+                        />
+                      </div>
+                    </details>
+                  ))}
+              </details>
+            ))}
+            {looseMilestones.length > 0 && (
+              <>
+                {anyStructure && <h4 class="loose-title">{t(lang, 'views.reform_milestones')}</h4>}
+                <DeliveryTable rows={looseMilestones} ragLabel={ragLabel} />
+              </>
+            )}
+          </div>
+        </section>
+      );
+    })
+  }
+
+  {
+    !filter.reform && (
+      <section class="reform" data-reform="programme" aria-labelledby="title-programme">
+        <header class="reform-head">
+          <h2 class="reform-title" id="title-programme">
+            <ReformChip reformId={null} label={t(lang, 'views.programme')} compact />
+            <span>{t(lang, 'views.programme')}</span>
+          </h2>
+          {programme.length > 0 && <p class="reform-position">{t(lang, 'views.pw_counts', counts(programme))}</p>}
+        </header>
+        {programme.length === 0 ? <p class="meta">{t(lang, 'views.programme_none')}</p> : <DeliveryTable rows={programme} ragLabel={ragLabel} />}
+      </section>
+    )
+  }
+  <p class="meta legend">{t(lang, 'views.rag_legend')}</p>
+
+  {
+    openStageId && !openStage && (
+      <SidePanel title={t(lang, 'views.stages')} closeHref={closeHref}>
+        <p>{t(lang, 'views.pw_stage_not_found')}</p>
+      </SidePanel>
+    )
+  }
+  {
+    openStage && (
+      <SidePanel title={t(lang, 'views.pw_panel_title', { reform: openStage.reform_id, stage: stageName(openStage) })} closeHref={closeHref}>
+        <p class="panel-state">
+          <span class={`pill ${openStage.status === 'complete' ? 'pill-blue' : openStage.status === 'in_progress' ? 'pill-green' : openStage.status === 'blocked' ? 'pill-red' : 'pill-grey'}`} data-testid="stage-status">
+            {label('stage_status', openStage.status)}
+          </span>
+        </p>
+        <dl class="facts" data-testid="stage-facts">
+          <dt>{t(lang, 'views.pw_fact_position')}</dt>
+          <dd>{t(lang, 'views.pw_at_one', { n: openStageNumber, total: stagesOf(openStage.reform_id).length })}</dd>
+          <dt>{t(lang, 'views.pw_fact_dates')}</dt>
+          <dd>
+            {openStage.entry_date && openStage.exit_date
+              ? t(lang, 'views.stage_dates', { entry: formatDate(openStage.entry_date, lang), exit: formatDate(openStage.exit_date, lang) })
+              : openStage.entry_date
+                ? t(lang, 'views.pw_since', { date: formatDate(openStage.entry_date, lang) })
+                : t(lang, 'views.pw_not_set')}
+          </dd>
+          <dt>{t(lang, 'views.pw_fact_responsible')}</dt>
+          <dd>{openStage.responsible ?? t(lang, 'views.pw_not_set')}</dd>
+          <dt>{t(lang, 'views.pw_fact_validation')}</dt>
+          <dd>{label('validation_status', openStage.validation_status)}</dd>
+          <dt>{t(lang, 'views.pw_fact_evidence')}</dt>
+          <dd>{t(lang, 'views.evidence_count', { n: openStage.evidence })}</dd>
+          <dt>{t(lang, 'views.pw_fact_escalation')}</dt>
+          <dd>{openStage.escalation_needed ? t(lang, 'views.pw_escalation_value', { to: openStage.escalation_to ?? '' }) : t(lang, 'views.pw_none')}</dd>
+        </dl>
+        {openStage.stalled && <p class="now-warn">{t(lang, 'views.stage_stalled')}</p>}
+      </SidePanel>
+    )
+  }
+</Base>
+
+<style>
+  .pw-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .pw-pills {
+    display: flex;
+    gap: var(--space-1);
+    padding: 0.2rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .pw-pills a {
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-round);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+    text-decoration: none;
+  }
+  .pw-pills a:hover {
+    color: var(--color-text);
+    background: var(--color-surface-hover);
+  }
+  .pw-pills a[aria-current='page'] {
+    background: var(--color-forest);
+    color: var(--color-primary-contrast);
+  }
+  .pw-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2);
+  }
+  .pw-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+  .pw-field label {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .pw-filters select {
+    width: auto;
+    min-width: 7rem;
+  }
+  .reform {
+    margin-top: var(--space-6);
+    padding: var(--space-6);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .reform-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+    margin-bottom: var(--space-6);
+  }
+  .reform-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0;
+    font-size: var(--text-lg);
+  }
+  .reform-position {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .under-way {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: var(--space-3);
+    margin-top: var(--space-6);
+  }
+  .now-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+    text-decoration: none;
+    transition: background var(--motion);
+  }
+  .now-card:hover,
+  .now-card:focus-visible {
+    background: var(--color-accent-soft);
+  }
+  .now-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .now-name {
+    font-weight: var(--weight-bold);
+  }
+  .now-meta {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .now-warn {
+    font-size: var(--text-sm);
+    color: var(--color-rag-red);
+  }
+  .next-escalation {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .next-icon {
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    color: var(--color-rag-amber);
+  }
+  .next-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+  .delivery {
+    margin-top: var(--space-8);
+  }
+  .delivery-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  .delivery-head h3 {
+    margin: 0;
+    font-size: var(--text-md);
+  }
+  .delivery-counts {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .meta {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .loose-title {
+    margin: var(--space-6) 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  /* Workstreams and deliverables: group rows in the table's columns, opening to their items. */
+  .group {
+    border-bottom: 1px solid var(--color-border);
+  }
+  .group-row {
+    display: grid;
+    grid-template-columns: 6.5rem minmax(0, 1fr) 9rem auto;
+    align-items: start;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    cursor: pointer;
+    list-style: none;
+  }
+  .group-row::-webkit-details-marker {
+    display: none;
+  }
+  .group-id {
+    position: relative;
+    padding-left: 1rem;
+    padding-top: 0.15rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  /* A small chevron that turns when the group opens. */
+  .group-id::before {
+    content: '';
+    position: absolute;
+    left: 0.1rem;
+    top: 0.45rem;
+    width: 0.35rem;
+    height: 0.35rem;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform var(--motion);
+  }
+  .group[open] > .group-row .group-id::before {
+    transform: rotate(45deg);
+  }
+  .group-name a {
+    font-weight: var(--weight-bold);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .group-name a:hover {
+    text-decoration: underline;
+  }
+  .group-type {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .group-meta {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .group-inner {
+    margin-left: var(--space-4);
+    border-bottom: 0;
+    border-top: 1px solid var(--color-border);
+  }
+  .group-body {
+    padding: 0 0 var(--space-3) var(--space-4);
+  }
+  .legend {
+    margin-top: var(--space-6);
+  }
+  .panel-state {
+    margin: 0 0 var(--space-4);
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+    font-size: var(--text-md);
+  }
+  .facts dt {
+    color: var(--color-text-muted);
+  }
+  .facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 767px) {
+    .pw-toolbar {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .pw-pills {
+      align-self: flex-start;
+    }
+    .reform {
+      padding: var(--space-4);
+    }
+    .group-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .group-id {
+      grid-column: 1 / -1;
+    }
+    .group-meta {
+      display: none;
+    }
+    .group-inner {
+      margin-left: var(--space-2);
+    }
+    .group-body {
+      padding-left: var(--space-2);
+    }
+  }
+</style>

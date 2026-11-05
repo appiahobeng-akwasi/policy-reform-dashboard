@@ -1,0 +1,33 @@
+{
+  "rule": "X02",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "status": "on_track"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "status": "On Track"
+        },
+        "id": "MS-001"
+      }
+    ],
+    "expect": {
+      "field": "status",
+      "value": "On Track"
+    }
+  }
+}

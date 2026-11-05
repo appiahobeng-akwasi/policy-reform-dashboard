@@ -1,0 +1,105 @@
+---
+// Upload a filled-in template. With JavaScript the file goes by resumable upload; without, with the form.
+import templateUrl from '../../../templates/Bulk_Upload_Template_v1.0.0.xlsx?url';
+import manifest from '../../../templates/template_manifest.v1.json';
+import Base from '../../layouts/Base.astro';
+import { t } from '../../i18n';
+import { BULK_ROLES, MAX_UPLOAD_BYTES, processUpload } from '../../lib/bulk/process';
+import { asUser } from '../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fuploads%2Fnew', 303);
+const allowed = BULK_ROLES.includes(user.role);
+
+/** Only one of the person's own uploads can be the one a corrected file replaces. */
+async function ownPrevious(value: unknown): Promise<string | null> {
+  if (typeof value !== 'string' || !/^[0-9a-f-]{36}$/.test(value)) return null;
+  const found = await asUser(user!.claims, (db) =>
+    db.query("select 1 from submissions where submission_id = $1 and submitted_by = $2 and route = 'bulk_upload'", [value, user!.userId]),
+  );
+  return found.rowCount ? value : null;
+}
+
+let tooBig = false;
+if (Astro.request.method === 'POST' && allowed) {
+  const form = await Astro.request.formData();
+  const file = form.get('file');
+  if (file instanceof File && file.size > 0) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      tooBig = true;
+    } else {
+      const { submissionId } = await processUpload(user, { bytes: new Uint8Array(await file.arrayBuffer()), fileName: file.name }, await ownPrevious(form.get('previous')));
+      return Astro.redirect(`/uploads/${submissionId}`, 303);
+    }
+  }
+}
+const previous = await ownPrevious(Astro.url.searchParams.get('previous'));
+const strings = { checking: t(lang, 'bulk.checking'), uploading: t(lang, 'evidence.uploading'), paused: t(lang, 'evidence.paused'), failed: t(lang, 'evidence.failed') };
+---
+
+<Base title={t(lang, 'bulk.title')}>
+  <div class="reading">
+    <p class="crumb"><a href="/uploads">{t(lang, 'bulk.back')}</a></p>
+    <div class="page-head">
+      <h1>{t(lang, 'bulk.title')}</h1>
+      {allowed && <p>{t(lang, 'bulk.intro')}</p>}
+    </div>
+    {
+      !allowed ? (
+        <p class="notice">{t(lang, 'bulk.not_allowed')}</p>
+      ) : (
+        <div class="card stack">
+          <p class="template">
+            <a class="btn btn-secondary" href={templateUrl} download="Bulk_Upload_Template_v1.0.0.xlsx">
+              {t(lang, 'bulk.download_template', { version: manifest.version })}
+            </a>
+          </p>
+          {tooBig && (
+            <p class="error" role="alert">
+              {t(lang, 'evidence.bad_size')}
+            </p>
+          )}
+          <form method="post" enctype="multipart/form-data" class="stack" id="bulk-form" data-strings={JSON.stringify(strings)}>
+            <input type="hidden" name="previous" value={previous ?? ''} />
+            <div class="drop">
+              <label for="file">{t(lang, 'bulk.choose_file')}</label>
+              <input id="file" name="file" type="file" accept=".xlsx,.csv" required />
+            </div>
+            <button class="btn" type="submit">
+              {t(lang, 'bulk.upload')}
+            </button>
+            <div id="bulk-status" role="status" aria-live="polite"></div>
+          </form>
+        </div>
+      )
+    }
+  </div>
+</Base>
+
+<style>
+  .crumb {
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+  .template {
+    margin: 0;
+  }
+  .drop {
+    padding: var(--space-6) var(--space-4);
+    border: 2px dashed #9fd8bf;
+    border-radius: var(--radius-md);
+    background: var(--color-accent-soft) var(--gradient-accent-soft);
+    text-align: center;
+  }
+  .drop label {
+    margin-bottom: var(--space-3);
+  }
+  #bulk-status {
+    font-size: var(--text-md);
+    color: var(--color-text-muted);
+  }
+</style>
+
+<script>
+  import '../../scripts/bulk-upload';
+</script>

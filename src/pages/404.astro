@@ -1,0 +1,12 @@
+---
+import Base from '../layouts/Base.astro';
+import { t } from '../i18n';
+
+const { lang } = Astro.locals;
+---
+
+<Base title={t(lang, 'errors.not_found_title')}>
+  <h1>{t(lang, 'errors.not_found_title')}</h1>
+  <p>{t(lang, 'errors.not_found_body')}</p>
+  <p><a href="/">{t(lang, 'errors.back_home')}</a></p>
+</Base>

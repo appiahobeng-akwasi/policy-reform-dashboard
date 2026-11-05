@@ -1,0 +1,54 @@
+{
+  "rule": "B15",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "evidence_item",
+        "op": "create",
+        "fields": {
+          "title": "Minutes of the land working group",
+          "evidence_type": "meeting_minutes",
+          "source_institution": "Ministry of Agriculture",
+          "evidence_date": "2026-11-05",
+          "file_path": "evidence/minutes.pdf",
+          "file_mime": "application/pdf",
+          "file_bytes": 200000,
+          "file_sha256": "bbbb"
+        },
+        "links": [
+          {
+            "object_type": "milestone",
+            "object_id": "MS-001"
+          }
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "evidence_item",
+        "op": "create",
+        "fields": {
+          "title": "Minutes of the land working group",
+          "evidence_type": "meeting_minutes",
+          "source_institution": "Ministry of Agriculture",
+          "evidence_date": "2026-11-05",
+          "file_path": "evidence/minutes.xlsm",
+          "file_bytes": 200000
+        },
+        "links": [
+          {
+            "object_type": "milestone",
+            "object_id": "MS-001"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "field": "file"
+    }
+  }
+}

@@ -1,0 +1,80 @@
+---
+// Side panel (docs/08 section 3): opens from the right over the list, so you never lose your
+// place. Rendered by the server from the page address, so it can be shared and works without
+// JavaScript; the close link (and Esc, with the shared script) goes back to the list. It is a
+// modal dialog (decision 92): the shared script moves focus to its title and keeps Tab inside it.
+import { t } from '../i18n';
+import Icon from './Icon.astro';
+
+interface Props {
+  title: string;
+  closeHref: string;
+}
+const { title, closeHref } = Astro.props;
+const { lang } = Astro.locals;
+---
+
+<a class="panel-backdrop" href={closeHref} tabindex="-1" aria-hidden="true"></a>
+<aside class="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" data-testid="side-panel">
+  <header class="panel-head">
+    <h2 id="panel-title" tabindex="-1">{title}</h2>
+    <slot name="actions" />
+    <a class="btn btn-ghost panel-close" href={closeHref} data-panel-close aria-label={t(lang, 'panel.close')}>
+      <Icon name="close" />
+    </a>
+  </header>
+  <div class="panel-body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .panel-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: rgb(20 22 20 / 20%);
+  }
+  .panel {
+    position: fixed;
+    z-index: 36;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(var(--panel-width), 100vw);
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+    box-shadow: var(--shadow-float);
+    animation: panel-in var(--motion);
+  }
+  .panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .panel-head h2 {
+    flex: 1;
+    margin: 0;
+    font-size: var(--text-lg);
+  }
+  .panel-close {
+    flex: none;
+    padding: 0 var(--space-2);
+  }
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-4) var(--space-6) var(--space-8);
+  }
+  @keyframes panel-in {
+    from {
+      transform: translateX(2rem);
+      opacity: 0;
+    }
+  }
+</style>

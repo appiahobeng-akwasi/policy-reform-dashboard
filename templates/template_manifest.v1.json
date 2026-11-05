@@ -1,0 +1,291 @@
+{
+  "version": "1.0.0",
+  "sheets": {
+    "Workstreams": [
+      "workstream_id",
+      "reform_id",
+      "name",
+      "workstream_type",
+      "owner_email",
+      "start_date",
+      "due_date",
+      "status",
+      "progress_pct",
+      "rag_override",
+      "rag_override_reason",
+      "next_action",
+      "blocker",
+      "comments",
+      "reported_by_email"
+    ],
+    "Deliverables": [
+      "deliverable_id",
+      "workstream_id",
+      "name",
+      "description",
+      "owner_email",
+      "start_date",
+      "due_date",
+      "forecast_date",
+      "actual_date",
+      "status",
+      "progress_pct",
+      "evidence_ids",
+      "evidence_confidence",
+      "depends_on",
+      "next_action",
+      "blocker",
+      "comments",
+      "reported_by_email"
+    ],
+    "Activities": [
+      "activity_id",
+      "deliverable_id",
+      "name",
+      "owner_email",
+      "start_date",
+      "due_date",
+      "forecast_date",
+      "actual_date",
+      "status",
+      "progress_pct",
+      "depends_on",
+      "next_action",
+      "blocker",
+      "comments",
+      "reported_by_email"
+    ],
+    "Milestones": [
+      "milestone_id",
+      "reform_id",
+      "deliverable_id",
+      "name",
+      "milestone_type",
+      "pathway_stage",
+      "is_decision_gate",
+      "owner_email",
+      "planned_date",
+      "forecast_date",
+      "actual_date",
+      "status",
+      "evidence_ids",
+      "evidence_confidence",
+      "next_action",
+      "blocker",
+      "comments",
+      "reported_by_email"
+    ],
+    "Stage_Updates": [
+      "stage_record_id",
+      "reform_id",
+      "stage",
+      "entry_date",
+      "exit_date",
+      "status",
+      "evidence_ids",
+      "validation_status",
+      "responsible_email",
+      "escalation_needed",
+      "escalation_to",
+      "comments",
+      "reported_by_email"
+    ],
+    "Risks": [
+      "risk_id",
+      "reform_ids",
+      "category",
+      "description",
+      "likelihood",
+      "impact",
+      "mitigation",
+      "trigger",
+      "owner_email",
+      "residual_likelihood",
+      "residual_impact",
+      "treatment",
+      "review_date",
+      "status",
+      "reported_by_email"
+    ],
+    "Decisions": [
+      "decision_id",
+      "reform_ids",
+      "decision_date",
+      "decision_type",
+      "decision_body",
+      "decision_maker",
+      "summary",
+      "reason",
+      "follow_up_action",
+      "follow_up_owner_email",
+      "follow_up_due",
+      "status",
+      "evidence_ids",
+      "reported_by_email"
+    ],
+    "Actions": [
+      "action_id",
+      "source_type",
+      "source_id",
+      "description",
+      "owner_email",
+      "due_date",
+      "status",
+      "comments",
+      "reported_by_email"
+    ],
+    "Indicator_Values": [
+      "indicator_code",
+      "reform_id",
+      "period_end",
+      "value",
+      "is_proxy",
+      "confidence",
+      "evidence_basis",
+      "evidence_ids",
+      "comment",
+      "reported_by_email"
+    ],
+    "Evidence_Register": [
+      "evidence_id",
+      "title",
+      "evidence_type",
+      "source_institution",
+      "evidence_date",
+      "linked_objects",
+      "external_url",
+      "comments",
+      "reported_by_email"
+    ]
+  },
+  "lists": {
+    "delivery_status": [
+      "not_started",
+      "on_track",
+      "at_risk",
+      "delayed",
+      "blocked",
+      "complete",
+      "cancelled"
+    ],
+    "stage_status": [
+      "not_started",
+      "in_progress",
+      "complete",
+      "blocked"
+    ],
+    "pathway_stage": [
+      "problem_identified",
+      "reform_agreed",
+      "technical_design",
+      "consultation",
+      "validation",
+      "approval",
+      "implementation",
+      "institutionalised"
+    ],
+    "rag": [
+      "green",
+      "amber",
+      "red",
+      "grey",
+      "blue"
+    ],
+    "workstream_type": [
+      "policy",
+      "technical",
+      "stakeholder",
+      "implementation"
+    ],
+    "milestone_type": [
+      "legal",
+      "technical",
+      "consultation",
+      "approval",
+      "operational"
+    ],
+    "risk_category": [
+      "political",
+      "institutional",
+      "legal",
+      "financial",
+      "operational",
+      "data",
+      "security",
+      "stakeholder",
+      "climate",
+      "political_economy",
+      "delivery_capacity",
+      "regulatory"
+    ],
+    "risk_status": [
+      "open",
+      "monitoring",
+      "closed"
+    ],
+    "treatment": [
+      "treat",
+      "transfer",
+      "tolerate",
+      "terminate"
+    ],
+    "decision_type": [
+      "continue",
+      "adapt",
+      "escalate",
+      "pause",
+      "stop",
+      "resequence"
+    ],
+    "decision_status": [
+      "open",
+      "implemented",
+      "closed",
+      "cancelled"
+    ],
+    "action_status": [
+      "open",
+      "done",
+      "cancelled"
+    ],
+    "action_source": [
+      "decision",
+      "review",
+      "risk",
+      "escalation",
+      "adaptation",
+      "other"
+    ],
+    "evidence_type": [
+      "meeting_minutes",
+      "letter",
+      "draft_law",
+      "circular",
+      "memo",
+      "report",
+      "screenshot",
+      "email",
+      "signed_agreement",
+      "other"
+    ],
+    "validation_status": [
+      "pending",
+      "validated",
+      "rejected"
+    ],
+    "confidence": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "yes_no": [
+      "yes",
+      "no"
+    ],
+    "reform_id": [
+      "RA1",
+      "RA2",
+      "RA3"
+    ]
+  }
+}

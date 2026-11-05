@@ -1,0 +1,65 @@
+---
+// The one icon each kind of thing has everywhere (rows, panels, search, notices, approvals),
+// on a soft round chip. Decorative: the text beside it names the thing.
+import Icon from './Icon.astro';
+
+const ICONS = {
+  milestone: 'flag',
+  deliverable: 'box',
+  activity: 'checklist',
+  workstream: 'layers',
+  risk: 'risks',
+  decision: 'governance',
+  evidence: 'paperclip',
+  indicator: 'merl',
+  review: 'calendar',
+  confirmation: 'check_circle',
+  returned: 'returned',
+  upload: 'upload',
+  rule: 'rule',
+} as const;
+export type ObjectKind = keyof typeof ICONS;
+
+interface Props {
+  kind: string;
+  size?: 'sm' | 'md';
+}
+const { kind, size = 'md' } = Astro.props;
+const name = kind in ICONS ? ICONS[kind as ObjectKind] : 'file';
+---
+
+<span class={`object-icon object-${kind} size-${size}`} aria-hidden="true"><Icon name={name} /></span>
+
+<style>
+  .object-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    border-radius: 50%;
+    color: var(--color-accent);
+    background: var(--color-accent-soft) var(--gradient-accent-soft);
+  }
+  .size-md {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+  .size-sm {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+  .object-risk,
+  .object-returned {
+    color: var(--color-rag-amber);
+    background: var(--color-rag-amber-bg) var(--gradient-amber-soft);
+  }
+  .object-confirmation {
+    color: var(--color-rag-green);
+    background: var(--color-rag-green-bg) var(--gradient-green-soft);
+  }
+  .object-decision,
+  .object-review,
+  .object-indicator {
+    color: var(--color-rag-blue);
+    background: var(--color-rag-blue-bg) var(--gradient-blue-soft);
+  }
+</style>

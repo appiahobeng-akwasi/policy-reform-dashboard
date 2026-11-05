@@ -1,0 +1,37 @@
+{
+  "rule": "Q04",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "planned_date": "2026-11-01",
+          "status": "delayed",
+          "blocker": "Minister travelling",
+          "forecast_date": "2026-12-10"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "planned_date": "2026-11-01",
+          "status": "on_track"
+        },
+        "id": "MS-001"
+      }
+    ],
+    "expect": {
+      "field": "status",
+      "value": "on_track"
+    }
+  }
+}

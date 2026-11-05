@@ -1,0 +1,411 @@
+---
+// The preview (spec 01 section 5.2, docs/03 section 3): each sheet as a grid, red cells for
+// blocking problems and amber for scored ones, with the message in the person's language.
+// Cells can be fixed here; saving checks the file again as the next attempt.
+import manifest from '../../../templates/template_manifest.v1.json';
+import StatCard from '../../components/StatCard.astro';
+import Icon from '../../components/Icon.astro';
+import Base from '../../layouts/Base.astro';
+import { t, type MessageKey } from '../../i18n';
+import { columnForField } from '../../lib/bulk/map';
+import { applyPreviewEdits, BULK_ROLES, type CellEdit } from '../../lib/bulk/process';
+import { withoutRowPrefix } from '../../lib/gate/messages';
+import type { GateRow } from '../../lib/gate/types';
+import { asUser } from '../../lib/server-db';
+
+const PAGE_SIZE = 50;
+const { lang, user } = Astro.locals;
+const id = Astro.params['id'] ?? '';
+if (!user) return Astro.redirect(`/sign-in?next=${encodeURIComponent(`/uploads/${id}`)}`, 303);
+if (!BULK_ROLES.includes(user.role) || !/^[0-9a-f-]{36}$/.test(id)) return new Response(null, { status: 404 });
+
+const EDITABLE = ['draft', 'rejected_by_gate', 'returned'];
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const edits: CellEdit[] = [];
+  for (const [name, value] of form.entries()) {
+    const match = /^c\|(\d+)\|(.+)$/.exec(name);
+    if (!match || typeof value !== 'string') continue;
+    if (value !== String(form.get(`o|${match[1]}|${match[2]}`) ?? '')) edits.push({ rowIndex: Number(match[1]), column: match[2]!, value });
+  }
+  await applyPreviewEdits(user, id, edits);
+  return Astro.redirect(Astro.url.pathname + Astro.url.search, 303);
+}
+
+type Found = { rule_id: string; tier: string; severity: string; sheet: string | null; row_ref: number | null; field: string | null; cell: string | null; message_en: string; message_fr: string };
+const data = await asUser(user.claims, async (db) => {
+  const { rows } = await db.query<{ status: string; payload: { rows: GateRow[] }; file_name: string; review_note: string | null; reported_by_emails: string[] }>(
+    `select s.status, s.payload, b.file_name, s.review_note, b.reported_by_emails from submissions s join upload_batches b on b.batch_id = s.batch_id
+      where s.submission_id = $1 and s.submitted_by = (me()).user_id and s.route = 'bulk_upload'`,
+    [id],
+  );
+  const submission = rows[0];
+  if (!submission) return null;
+  const run = await db.query<{ dq_run_id: string; quality_score: string | null; outcome: string; file_failures: number; blocking_failures: number }>(
+    'select dq_run_id, quality_score, outcome, file_failures, blocking_failures from dq_runs where submission_id = $1 order by started_at desc, attempt_no desc limit 1',
+    [id],
+  );
+  const findings = run.rows[0]
+    ? (await db.query<Found>('select rule_id, tier, severity, sheet, row_ref, field, cell, message_en, message_fr from dq_findings where dq_run_id = $1 order by finding_id', [run.rows[0].dq_run_id])).rows
+    : [];
+  return { submission, run: run.rows[0] ?? null, findings };
+});
+if (!data) return new Response(null, { status: 404 });
+
+const { submission, run, findings } = data;
+const rows = submission.payload.rows ?? [];
+const message = (f: Found) => withoutRowPrefix(lang === 'fr' ? f.message_fr : f.message_en);
+const shownFindings = findings.filter((f) => f.severity !== 'fixed');
+const fileFindings = shownFindings.filter((f) => f.tier === 'file');
+const editable = EDITABLE.includes(submission.status) && (run?.file_failures ?? 0) === 0;
+// Only the Secretariat's uploads attribute rows to their reporters (decision 33); for others it is recorded only.
+const reportedByRecordedOnly = submission.reported_by_emails.length > 0 && user.role !== 'programme_admin' && user.role !== 'super_admin';
+
+// Findings by sheet and row; each one put on its column where it is about one column.
+const byRow = new Map<string, (Found & { column: string | null })[]>();
+for (const f of shownFindings) {
+  if (!f.sheet || f.row_ref === null) continue;
+  const key = `${f.sheet}|${f.row_ref}`;
+  byRow.set(key, [...(byRow.get(key) ?? []), { ...f, column: columnForField(f.sheet, f.field) }]);
+}
+const red = shownFindings.filter((f) => f.severity === 'error' && f.tier !== 'file').length;
+// Rows to fix: any row with a red finding; per sheet for the tab counts (decision 86).
+const rowLevel = (key: string) => {
+  const found = byRow.get(key) ?? [];
+  return found.some((f) => f.severity === 'error') ? 'red' : found.length > 0 ? 'amber' : 'ok';
+};
+const rowsToFix = [...byRow.keys()].filter((key) => rowLevel(key) === 'red');
+const amber = shownFindings.filter((f) => f.severity === 'warning').length;
+
+const templateSheets = manifest.sheets as Record<string, string[]>;
+const sheetNames = Object.keys(templateSheets).filter((name) => rows.some((r) => r.ref?.sheet === name));
+const sheetsWithProblems = sheetNames.filter((name) => rows.some((r) => r.ref?.sheet === name && byRow.has(`${name}|${r.ref?.row}`)));
+const toFixOn = (name: string) => rowsToFix.filter((key) => key.startsWith(`${name}|`)).length;
+const requested = Astro.url.searchParams.get('sheet');
+const sheet = requested && sheetNames.includes(requested) ? requested : (sheetsWithProblems[0] ?? sheetNames[0] ?? null);
+const showAll = Astro.url.searchParams.get('all') === '1';
+const page = Math.max(1, Number.parseInt(Astro.url.searchParams.get('page') ?? '1', 10) || 1);
+const columns = sheet ? (templateSheets[sheet] ?? []) : [];
+const sheetRows = rows
+  .map((row, index) => ({ row, index }))
+  .filter(({ row }) => row.ref?.sheet === sheet && (showAll || byRow.has(`${sheet}|${row.ref?.row}`)));
+const pageRows = sheetRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+const pages = Math.max(1, Math.ceil(sheetRows.length / PAGE_SIZE));
+const link = (params: Record<string, string | null>) => {
+  const query = new URLSearchParams();
+  const all = { sheet, all: showAll ? '1' : null, page: null, ...params };
+  for (const [k, v] of Object.entries(all)) if (v) query.set(k, v);
+  return `/uploads/${id}?${query}`;
+};
+const cellText = (value: unknown) => (value === null || value === undefined ? '' : typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value));
+---
+
+<Base title={submission.file_name}>
+  <p class="crumb"><a href="/uploads">{t(lang, 'bulk.back')}</a></p>
+  <div class="page-head">
+    <h1>{submission.file_name}</h1>
+  </div>
+
+  <div class:list={['summary', run?.outcome === 'pass' ? 'notice passed' : 'error']} role="status" data-testid="summary">
+    <p class="summary-head">
+      <Icon name={run?.outcome === 'pass' ? 'check_circle' : 'warning'} />
+      {
+        run?.outcome === 'pass' && submission.status !== 'rejected_by_gate'
+          ? t(lang, 'bulk.passed')
+          : fileFindings.length > 0
+            ? t(lang, 'bulk.file_rejected')
+            : t(lang, 'bulk.rejected')
+      }
+    </p>
+    {run?.quality_score != null && <p data-testid="score">{t(lang, 'card.score', { score: Number(run.quality_score) })}</p>}
+    {fileFindings.length === 0 && <p>{t(lang, 'bulk.summary', { rows: rows.length, red, amber })}</p>}
+    {rowsToFix.length > 0 && (
+      <p>
+        <a class="btn btn-secondary" href="#rows" data-testid="fix-rows">
+          {t(lang, 'bulk.fix_rows', { n: rowsToFix.length })}
+        </a>
+      </p>
+    )}
+    {submission.review_note && <p>{t(lang, 'card.returned', { note: submission.review_note })}</p>}
+  </div>
+
+  {
+    fileFindings.length === 0 && (
+      <ul class="stats" aria-label={t(lang, 'items.stats_label')}>
+        <StatCard label={t(lang, 'bulk.stat_rows')} value={rows.length} />
+        <StatCard label={t(lang, 'bulk.stat_red')} value={red} tone={red > 0 ? 'red' : 'default'} context={t(lang, 'bulk.stat_red_context')} />
+        <StatCard label={t(lang, 'bulk.stat_amber')} value={amber} tone={amber > 0 ? 'amber' : 'default'} context={t(lang, 'bulk.stat_amber_context')} />
+        <StatCard label={t(lang, 'bulk.stat_score')} value={run?.quality_score != null ? Number(run.quality_score) : t(lang, 'items.none')} context={t(lang, 'bulk.stat_score_context')} />
+      </ul>
+    )
+  }
+
+  {reportedByRecordedOnly && <p class="hint">{t(lang, 'onbehalf.reported_by_recorded')}</p>}
+
+  {
+    fileFindings.length > 0 && (
+      <ul class="file-problems">
+        {fileFindings.map((f) => (
+          <li class="hint-error">{message(f)}</li>
+        ))}
+      </ul>
+    )
+  }
+
+  <p class="links">
+    {
+      shownFindings.length > 0 && (
+        <a class="btn btn-secondary" href={`/uploads/${id}/gaps.csv`} download>
+          {t(lang, 'bulk.gaps_csv')}
+        </a>
+      )
+    }
+    {
+      EDITABLE.includes(submission.status) && (
+        <a class="btn btn-ghost" href={`/uploads/new?previous=${id}`}>
+          {t(lang, 'bulk.upload_corrected')}
+        </a>
+      )
+    }
+  </p>
+
+  {
+    sheet && (
+      <>
+        <nav class="tabs" aria-label={t(lang, 'bulk.sheet')}>
+          {sheetNames.map((name) => (
+            <a href={link({ sheet: name })} aria-current={name === sheet ? 'page' : undefined}>
+              {name}
+              {toFixOn(name) > 0 ? (
+                <span class="tab-pill bad">
+                  {toFixOn(name)}
+                  <span class="visually-hidden"> {t(lang, 'bulk.rows_to_fix')}</span>
+                </span>
+              ) : (
+                !sheetsWithProblems.includes(name) && (
+                  <span class="tab-ok" title={t(lang, 'bulk.sheet_ok')}>
+                    <Icon name="check_circle" />
+                    <span class="visually-hidden">{t(lang, 'bulk.sheet_ok')}</span>
+                  </span>
+                )
+              )}
+            </a>
+          ))}
+        </nav>
+        <p class="filter">
+          <a href={link({ all: null })} aria-current={!showAll ? 'true' : undefined}>{t(lang, 'bulk.show_problems')}</a>
+          <a href={link({ all: '1' })} aria-current={showAll ? 'true' : undefined}>{t(lang, 'bulk.show_all')}</a>
+        </p>
+        <p class="hint">{t(lang, 'bulk.legend')}</p>
+
+        {pageRows.length === 0 ? (
+          <p>{t(lang, 'bulk.no_rows')}</p>
+        ) : (
+          <form method="post" id="rows">
+            <div class="grid-wrap">
+              <table class="grid">
+                <thead>
+                  <tr>
+                    <th scope="col">{t(lang, 'bulk.row')}</th>
+                    {columns.map((column) => (
+                      <th scope="col">{column}</th>
+                    ))}
+                    <th scope="col">{t(lang, 'bulk.problems')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map(({ row, index }) => {
+                    const problems = byRow.get(`${sheet}|${row.ref?.row}`) ?? [];
+                    return (
+                      <tr>
+                        <th scope="row" class={`row-${rowLevel(`${sheet}|${row.ref?.row}`)}`}>
+                          <span class="row-state" aria-hidden="true">
+                            <Icon name={rowLevel(`${sheet}|${row.ref?.row}`) === 'ok' ? 'check_circle' : 'warning'} />
+                          </span>
+                          {row.ref?.row}
+                        </th>
+                        {columns.map((column) => {
+                          const here = problems.filter((p) => p.column === column);
+                          const level = here.some((p) => p.severity === 'error') ? 'red' : here.length > 0 ? 'amber' : null;
+                          const value = cellText(row.source?.[column]);
+                          return (
+                            <td class:list={[level && `cell-${level}`]} data-cell={`${column}${row.ref?.row}`}>
+                              {editable ? (
+                                <>
+                                  <input
+                                    type="text"
+                                    name={`c|${index}|${column}`}
+                                    value={value}
+                                    aria-label={`${column} ${t(lang, 'bulk.row')} ${row.ref?.row}`}
+                                    aria-invalid={level === 'red' ? 'true' : undefined}
+                                    title={here.map(message).join(' ')}
+                                  />
+                                  <input type="hidden" name={`o|${index}|${column}`} value={value} />
+                                </>
+                              ) : (
+                                value
+                              )}
+                              {level && <span class="visually-hidden">({t(lang, level === 'red' ? 'bulk.red' : 'bulk.amber')})</span>}
+                            </td>
+                          );
+                        })}
+                        <td class="problems">
+                          {problems.map((p) => (
+                            <p class={p.severity === 'error' ? 'hint-error' : 'hint-warning'}>
+                              {p.column && <strong>{p.column}: </strong>}
+                              {message(p)}{' '}
+                              <a class="rule-link" href={`/rules?open=${encodeURIComponent(p.rule_id)}`} title={t(lang, 'rules_ref.rule', { id: p.rule_id })}>
+                                {p.rule_id}
+                              </a>
+                            </p>
+                          ))}
+                          {row.ignored && <p class="hint">{t(lang, 'bulk.ignored_note', { columns: row.ignored.join(', ') })}</p>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {editable && (
+              <p>
+                <button class="button" type="submit">{t(lang, 'bulk.save')}</button>
+              </p>
+            )}
+          </form>
+        )}
+
+        {pages > 1 && (
+          <nav class="pager">
+            {page > 1 && <a href={link({ page: String(page - 1) })}>{t(lang, 'items.previous')}</a>}
+            <span>{t(lang, 'items.page', { n: page })}</span>
+            {page < pages && <a href={link({ page: String(page + 1) })}>{t(lang, 'items.next')}</a>}
+          </nav>
+        )}
+      </>
+    )
+  }
+  <p class="hint">{t(lang, `bulk.status_${submission.status}` as MessageKey)}</p>
+</Base>
+
+<style>
+  .crumb {
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+  .summary-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: var(--weight-bold);
+  }
+  .tab-pill.bad {
+    background: var(--color-danger) var(--gradient-danger);
+    color: #ffffff;
+  }
+  .tab-ok {
+    display: inline-flex;
+    margin-left: var(--space-1);
+    color: var(--color-rag-green);
+    vertical-align: middle;
+  }
+  .row-state {
+    display: inline-flex;
+    margin-right: var(--space-1);
+    vertical-align: middle;
+  }
+  .row-red .row-state {
+    color: var(--color-rag-red);
+  }
+  .row-amber .row-state {
+    color: var(--color-rag-amber);
+  }
+  .row-ok .row-state {
+    color: var(--color-rag-green);
+  }
+  .rule-link {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .summary {
+    margin-bottom: var(--space-4);
+  }
+  .summary p:last-child {
+    margin-bottom: 0;
+  }
+  .passed {
+    border-color: #b9dcc3;
+    background: var(--color-rag-green-bg);
+  }
+  .links,
+  .filter,
+  .pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .filter {
+    font-size: var(--text-md);
+  }
+  .filter a[aria-current='true'] {
+    color: var(--color-text);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+  }
+  .tabs {
+    margin-top: var(--space-6);
+  }
+  .grid-wrap {
+    overflow-x: auto;
+    max-width: 100%;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+  .grid {
+    border-collapse: collapse;
+    font-size: var(--text-md);
+  }
+  .grid th,
+  .grid td {
+    border-bottom: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-border);
+    padding: var(--space-1) var(--space-2);
+    vertical-align: top;
+    text-align: left;
+  }
+  .grid thead th {
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .grid tbody th {
+    color: var(--color-text-muted);
+    font-weight: var(--weight-normal);
+    font-variant-numeric: tabular-nums;
+  }
+  .grid input {
+    min-width: 8rem;
+    min-height: 2rem;
+    padding: var(--space-1) var(--space-2);
+    border-color: var(--color-border);
+    background: transparent;
+  }
+  .cell-red {
+    background: var(--color-rag-red-bg);
+    box-shadow: inset 0 0 0 2px var(--color-rag-red);
+  }
+  .cell-amber {
+    background: var(--color-rag-amber-bg);
+    box-shadow: inset 0 0 0 2px var(--color-rag-amber);
+  }
+  .problems {
+    min-width: 18rem;
+  }
+</style>

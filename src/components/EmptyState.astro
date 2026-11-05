@@ -1,0 +1,76 @@
+---
+// Nothing to show (docs/08 section 3, decision 90): an icon, a short title, one sentence and the
+// next action. Title and icon are optional, so a bare message still works.
+import Icon, { type IconName } from './Icon.astro';
+
+interface Props {
+  message: string;
+  title?: string | undefined;
+  icon?: IconName | undefined;
+  action?: { href: string; label: string } | undefined;
+  testId?: string | undefined;
+}
+const { message, title, icon, action, testId = 'empty-state' } = Astro.props;
+---
+
+<div class="empty" data-testid={testId}>
+  {
+    icon && (
+      <span class="empty-icon" aria-hidden="true">
+        <Icon name={icon} />
+      </span>
+    )
+  }
+  {title && <p class="empty-title">{title}</p>}
+  <p class="empty-message">{message}</p>
+  {action && <a class="btn btn-secondary" href={action.href}>{action.label}</a>}
+</div>
+
+<style>
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-8) var(--space-4);
+    text-align: center;
+    background: var(--color-surface) var(--gradient-card);
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+  }
+  .empty p {
+    margin: 0;
+  }
+  .empty-icon {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin-bottom: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--color-accent-soft) var(--gradient-accent-soft);
+    color: var(--color-accent);
+  }
+  .empty-icon :global(svg) {
+    width: 1.35rem;
+    height: 1.35rem;
+  }
+  .empty-title {
+    font-weight: var(--weight-bold);
+    color: var(--color-text);
+  }
+  .empty-message {
+    max-width: 32rem;
+    font-size: var(--text-md);
+  }
+  .empty .btn {
+    margin-top: var(--space-2);
+  }
+  /* Inside a card the card is the frame: no second border. */
+  :global(.card) .empty {
+    padding: var(--space-6) var(--space-4);
+    border: 0;
+    background: none;
+  }
+</style>

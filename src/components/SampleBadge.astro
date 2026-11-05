@@ -1,0 +1,16 @@
+---
+// Marks placeholder records (decision 39; CLAUDE.md rule 11: sample data is labelled in the UI).
+import { t } from '../i18n';
+
+const { lang } = Astro.locals;
+---
+
+<span class="badge sample" title={t(lang, 'views.sample_title')}>{t(lang, 'views.sample')}</span>
+
+<style>
+  .sample {
+    background: var(--color-rag-grey-bg);
+    border-color: var(--color-rag-grey);
+    margin-left: var(--space-1);
+  }
+</style>

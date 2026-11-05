@@ -1,0 +1,52 @@
+---
+// Sign-in links land here. The link only fills in this form: the token is used when the
+// person presses the button, so email security scanners that open links cannot use it up.
+// A second press of the same link (a double-click, or the page sent again) finds the token used;
+// if that browser is already signed in, it simply carries on (decision 94).
+import Base from '../../layouts/Base.astro';
+import { t } from '../../i18n';
+import { takeNext } from '../../lib/auth/next-cookie';
+import { linkAuthUser } from '../../lib/server-db';
+
+const { lang, auth } = Astro.locals;
+let problem: 'link_invalid' | 'not_allowed' | null = null;
+let tokenHash = Astro.url.searchParams.get('token_hash') ?? '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  tokenHash = String(form.get('token_hash') ?? '');
+  const claims = tokenHash ? await auth.verifySignInLink(tokenHash) : null;
+  if (!claims?.email) {
+    if (await auth.claims()) return Astro.redirect(takeNext(Astro.cookies), 303);
+    problem = 'link_invalid';
+  } else if (!(await linkAuthUser(claims.email, claims.sub))) {
+    await auth.signOut();
+    problem = 'not_allowed';
+  } else {
+    return Astro.redirect(takeNext(Astro.cookies), 303);
+  }
+} else if (!tokenHash) {
+  problem = 'link_invalid';
+}
+---
+
+<Base title={t(lang, 'auth.confirm_title')} variant="auth">
+  <div class="auth-form">
+    <p class="auth-eyebrow">{t(lang, 'app.name')}</p>
+    <h1>{t(lang, 'auth.confirm_title')}</h1>
+    {
+      problem ? (
+        <>
+          <p class="error" role="alert">{t(lang, problem === 'link_invalid' ? 'auth.link_invalid' : 'auth.not_allowed')}</p>
+          <p><a href="/sign-in">{t(lang, 'auth.back_to_sign_in')}</a></p>
+        </>
+      ) : (
+        <form method="post" class="stack" data-submit-once>
+          <p class="auth-lead">{t(lang, 'auth.confirm_body')}</p>
+          <input type="hidden" name="token_hash" value={tokenHash} />
+          <button class="button" type="submit">{t(lang, 'auth.confirm_button')}</button>
+        </form>
+      )
+    }
+  </div>
+</Base>

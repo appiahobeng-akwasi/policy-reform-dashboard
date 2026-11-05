@@ -1,0 +1,50 @@
+---
+// Add someone who may sign in (replaces `npm run users:add` for day-to-day use). Admins only.
+import AccessFields from '../../../components/AccessFields.astro';
+import Base from '../../../layouts/Base.astro';
+import { t, type MessageKey } from '../../../i18n';
+import { ADMIN_ROLES, createUser, readAccessForm, type AccessInput, type Problem } from '../../../lib/admin/users';
+import { asUser } from '../../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin%2Fusers%2Fnew', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+const reforms = allowed ? await asUser(user.claims, async (db) => (await db.query<{ reform_id: string }>('select reform_id from reforms order by reform_id')).rows.map((r) => r.reform_id)) : [];
+
+let value: AccessInput = { name: '', email: '', role: 'contributor', language: lang, scope: [] };
+let problems: Problem[] = [];
+let error: string | null = null;
+if (allowed && Astro.request.method === 'POST') {
+  const read = readAccessForm(await Astro.request.formData(), reforms);
+  value = read.input;
+  problems = read.problems;
+  if (problems.length === 0) {
+    const result = await createUser(user.claims, value);
+    if (result.ok) return Astro.redirect(`/admin/users/${result.value}?added=1`, 303);
+    error = result.code;
+  }
+}
+---
+
+<Base title={t(lang, 'admin.add_user')}>
+  <p><a href="/admin/users">{t(lang, 'admin.back_users')}</a></p>
+  <h1>{t(lang, 'admin.add_user')}</h1>
+  {
+    !allowed ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        <p>{t(lang, 'admin.add_user_intro')}</p>
+        {error && (
+          <p class="error" role="alert" data-testid="admin-error">
+            {t(lang, `admin.error_${error}` as MessageKey)}
+          </p>
+        )}
+        <form method="post" class="stack narrow">
+          <AccessFields value={value} reforms={reforms} canGrantSuper={user.role === 'super_admin'} problems={problems} />
+          <button class="button" type="submit">{t(lang, 'admin.add_user')}</button>
+        </form>
+      </>
+    )
+  }
+</Base>

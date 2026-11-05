@@ -1,0 +1,24 @@
+{
+  "rule": "F04",
+  "pass": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {}
+  },
+  "fail": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {
+      "sheets": [
+        {
+          "name": "Sheet1",
+          "headers": [
+            "a"
+          ],
+          "dataRows": 3,
+          "formulaCells": []
+        }
+      ]
+    }
+  }
+}

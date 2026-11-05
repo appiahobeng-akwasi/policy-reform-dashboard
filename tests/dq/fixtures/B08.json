@@ -1,0 +1,38 @@
+{
+  "rule": "B08",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "next_action": "Send the draft decree to the minister"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "workstream",
+        "op": "create",
+        "fields": {
+          "reform_id": "RA1",
+          "name": "Land registry reform",
+          "workstream_type": "policy",
+          "start_date": "2026-11-01",
+          "due_date": "2027-03-31",
+          "status": "on_track",
+          "progress_pct": 20,
+          "next_action": "Hold the first working group"
+        }
+      }
+    ],
+    "expect": {
+      "field": "owner_person_id"
+    }
+  }
+}

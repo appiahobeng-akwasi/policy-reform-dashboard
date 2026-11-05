@@ -1,0 +1,463 @@
+---
+// Admin data quality page (docs/03 sections 7 and 8, build step 11, decision 90). Server-rendered,
+// no page JavaScript. Four tiles, the trend beside what needs attention (training suggested and
+// the checks that fail most), then one tab at a time: by person, checks, time to fix, stale items
+// and all attempts. Per-person figures are for admins only (spec 01 section 3); people are listed
+// by name, never ranked (docs/03 section 8.3). Admins can send a training notice (decision 43).
+import BarList from '../../components/BarList.astro';
+import DqSummary from '../../components/DqSummary.astro';
+import EmptyState from '../../components/EmptyState.astro';
+import LinkTabs from '../../components/LinkTabs.astro';
+import StatCard from '../../components/StatCard.astro';
+import QualityTrend from '../../components/QualityTrend.astro';
+import ShowNumbers from '../../components/ShowNumbers.astro';
+import Base from '../../layouts/Base.astro';
+import { formatDate, formatDateTime, formatNumber, t, type MessageKey } from '../../i18n';
+import { adminReport, PAGE_SIZE, readFilter, recentMonths, ROUTES, RULE_REVIEW_PCT, sendTrainingNotice, TRAINING_WINDOW } from '../../lib/admin/data-quality';
+import { ADMIN_ROLES } from '../../lib/admin/users';
+import { withoutRowPrefix } from '../../lib/gate/messages';
+import { asUser } from '../../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin%2Fdata-quality', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+
+let sent: 'yes' | 'already' | null = null;
+if (allowed && Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const target = String(form.get('user_id') ?? '');
+  const rules = String(form.get('rules') ?? '').split(',').filter(Boolean);
+  if (/^[0-9a-f-]{36}$/.test(target) && rules.length > 0) {
+    sent = (await sendTrainingNotice(user.claims, target, rules)) ? 'yes' : 'already';
+  }
+}
+
+const lists = allowed
+  ? await asUser(user.claims, async (db) => {
+      const reforms = await db.query<{ reform_id: string }>('select reform_id from reforms order by reform_id');
+      const people = await db.query<{ user_id: string; name: string }>(
+        `select u.user_id, coalesce(p.full_name, u.email) as name from app_users u join people p on p.person_id = u.person_id
+          where exists (select 1 from dq_runs r where r.run_by = u.user_id) order by lower(p.full_name)`,
+      );
+      return { reforms: reforms.rows.map((r) => r.reform_id), people: people.rows };
+    })
+  : null;
+const filter = readFilter(Astro.url.searchParams, lists?.reforms ?? []);
+const page = Math.max(1, Number.parseInt(Astro.url.searchParams.get('page') ?? '1', 10) || 1);
+const report = allowed ? await adminReport(user.claims, filter, page) : null;
+const pages = report ? Math.max(1, Math.ceil(report.attempts.total / PAGE_SIZE)) : 1;
+const names = new Map((report?.people ?? []).map((p) => [p.userId, p.name]));
+for (const p of lists?.people ?? []) names.set(p.user_id, p.name);
+
+const pct = (value: number | null) => (value === null ? t(lang, 'dq.none') : `${formatNumber(value, lang)}%`);
+const score = (value: number | null) => (value === null ? t(lang, 'dq.none') : formatNumber(value, lang));
+// Under an hour, minutes say more than "0 hours".
+const fixTime = (hours: number | null) =>
+  hours === null
+    ? t(lang, 'dq.none')
+    : hours < 1
+      ? t(lang, 'dq.minutes', { n: Math.max(1, Math.round(hours * 60)) })
+      : t(lang, 'dq.hours', { n: formatNumber(hours, lang) });
+// Each rule once, with its failures added up across months and the most people it affected in a month.
+const ruleTotals = report
+  ? [...report.rules.reduce((all, r) => {
+      const seen = all.get(r.ruleId);
+      all.set(r.ruleId, { ruleId: r.ruleId, failures: (seen?.failures ?? 0) + r.failures, users: Math.max(seen?.users ?? 0, r.usersAffected) });
+      return all;
+    }, new Map<string, { ruleId: string; failures: number; users: number }>()).values()].sort((a, b) => b.failures - a.failures || a.ruleId.localeCompare(b.ruleId))
+  : [];
+const ruleName = (id: string) => {
+  try {
+    return t(lang, `rules.${id}` as MessageKey);
+  } catch {
+    return id;
+  }
+};
+const monthLabel = (month: string) =>
+  new Intl.DateTimeFormat(lang === 'fr' ? 'fr-FR' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`));
+const TABS = ['people', 'checks', 'fix', 'stale', 'attempts'] as const;
+type Tab = (typeof TABS)[number];
+const tabParam = Astro.url.searchParams.get('tab') ?? '';
+const tab: Tab = (TABS as readonly string[]).includes(tabParam) ? (tabParam as Tab) : 'people';
+const query = (changes: Record<string, string | null>) => {
+  const params = new URLSearchParams(Astro.url.searchParams);
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null) params.delete(k);
+    else params.set(k, v);
+  }
+  return `?${params.toString()}`;
+};
+---
+
+<Base title={t(lang, 'dq.admin_title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'dq.admin_title')}</h1>
+    {report && lists && <p>{t(lang, 'dq.admin_intro')}</p>}
+  </div>
+  {
+    !report || !lists ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        {sent === 'yes' && <p class="notice" role="status">{t(lang, 'dq.training_sent')}</p>}
+        {sent === 'already' && <p class="notice" role="status">{t(lang, 'dq.training_already')}</p>}
+
+        <form method="get" class="filters">
+          <input type="hidden" name="tab" value={tab} />
+          <div>
+            <label for="period">{t(lang, 'dq.filter_period')}</label>
+            <select id="period" name="period">
+              <option value="last3" selected={filter.period === 'last3'}>{t(lang, 'dq.last3')}</option>
+              <option value="last12" selected={filter.period === 'last12'}>{t(lang, 'dq.last12')}</option>
+              {recentMonths().map((m) => <option value={m} selected={filter.period === m}>{monthLabel(m)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="route">{t(lang, 'dq.filter_route')}</label>
+            <select id="route" name="route">
+              <option value="">{t(lang, 'views.all')}</option>
+              {ROUTES.map((r) => <option value={r} selected={filter.route === r}>{t(lang, `approvals.route_${r}` as MessageKey)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="reform">{t(lang, 'views.filter_reform')}</label>
+            <select id="reform" name="reform">
+              <option value="">{t(lang, 'views.all')}</option>
+              {lists.reforms.map((r) => <option value={r} selected={filter.reform === r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="user">{t(lang, 'dq.filter_user')}</label>
+            <select id="user" name="user">
+              <option value="">{t(lang, 'views.all')}</option>
+              {lists.people.map((p) => <option value={p.user_id} selected={filter.userId === p.user_id}>{p.name}</option>)}
+            </select>
+          </div>
+          <button class="btn btn-secondary" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+
+        <DqSummary headline={report.headline} testId="figures" />
+
+        <div class="overview">
+          <section class="card" aria-labelledby="trend-title">
+            <h2 id="trend-title">{t(lang, 'dq.trend_title')}</h2>
+            {report.trend.length === 0 ? (
+              <EmptyState icon="quality" title={t(lang, 'dq.trend_none_title')} message={t(lang, 'views.trend_none')} testId="trend-empty" />
+            ) : (
+              <QualityTrend id="admin-trend" points={report.trend} showPassRate />
+            )}
+          </section>
+          <section class="card attention" aria-labelledby="attention-title" data-testid="attention">
+            <h2 id="attention-title">{t(lang, 'dq.attention_title')}</h2>
+            {report.training.length === 0 && ruleTotals.length === 0 ? (
+              <EmptyState icon="approvals" title={t(lang, 'dq.attention_none_title')} message={t(lang, 'dq.attention_none')} testId="attention-empty" />
+            ) : (
+              <>
+                <h3>{t(lang, 'dq.training_title')}</h3>
+                <p class="muted note">{t(lang, 'dq.training_rule', { n: TRAINING_WINDOW })}</p>
+                {report.training.length === 0 ? (
+                  <p class="muted">{t(lang, 'dq.training_none')}</p>
+                ) : (
+                  <ul class="training">
+                    {report.training.map((f) => (
+                      <li data-testid="training-flag">
+                        <span class="training-who">
+                          <strong>{names.get(f.userId) ?? f.userId}</strong>
+                          <span class="muted"> {t(lang, 'dq.training_passes', { passes: f.passes, n: TRAINING_WINDOW })}</span>
+                        </span>
+                        {f.topRules.length > 0 && <span class="muted training-rules">{t(lang, 'dq.training_rules', { rules: f.topRules.map((r) => `${r} ${ruleName(r)}`).join('; ') })}</span>}
+                        {f.lastNoticeAt && <span class="muted training-rules"> {t(lang, 'dq.training_last', { date: formatDate(f.lastNoticeAt, lang) })}</span>}
+                        {f.topRules.length > 0 && (
+                          <form method="post" action={query({})} class="inline-form">
+                            <input type="hidden" name="user_id" value={f.userId} />
+                            <input type="hidden" name="rules" value={f.topRules.join(',')} />
+                            <button class="btn btn-secondary btn-small" type="submit">{t(lang, 'dq.training_send')}</button>
+                          </form>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {ruleTotals.length > 0 && (
+                  <>
+                    <h3>{t(lang, 'dq.top_checks')}</h3>
+                    <ul class="top-checks">
+                      {ruleTotals.slice(0, 3).map((r) => (
+                        <li>
+                          <a href={`/rules?open=${encodeURIComponent(r.ruleId)}`}>
+                            <strong>{r.ruleId}</strong> {ruleName(r.ruleId)}
+                          </a>
+                          <span class="muted">{t(lang, 'dq.failures_n', { n: r.failures })}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+
+        <LinkTabs
+          label={t(lang, 'dq.tabs_label')}
+          current={tab}
+          tabs={[
+            { key: 'people', label: t(lang, 'dq.tab_people'), count: report.people.length, href: query({ tab: 'people', page: null }) },
+            { key: 'checks', label: t(lang, 'dq.tab_checks'), count: ruleTotals.length, href: query({ tab: 'checks', page: null }) },
+            { key: 'fix', label: t(lang, 'dq.fix_title'), href: query({ tab: 'fix', page: null }) },
+            { key: 'stale', label: t(lang, 'dq.tab_stale'), count: report.stale.reduce((n, x) => n + x.items, 0), href: query({ tab: 'stale', page: null }) },
+            { key: 'attempts', label: t(lang, 'dq.tab_attempts'), count: report.attempts.total, href: query({ tab: 'attempts' }) },
+          ]}
+        />
+
+        {tab === 'people' && (
+          <section aria-label={t(lang, 'dq.people_title')}>
+            {report.people.length === 0 ? (
+              <EmptyState icon="people" title={t(lang, 'dq.people_none_title')} message={t(lang, 'dq.no_attempts')} />
+            ) : (
+              <>
+                <div class="table-wrap">
+                  <table class="data-table" data-testid="people">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t(lang, 'dq.person')}</th>
+                        <th scope="col" class="number">{t(lang, 'dq.attempts')}</th>
+                        <th scope="col" class="number">{t(lang, 'dq.first_time_pass_rate')}</th>
+                        <th scope="col" class="number">{t(lang, 'dq.average_score')}</th>
+                        <th scope="col" class="number">{t(lang, 'dq.rejects')}</th>
+                        <th scope="col">{t(lang, 'dq.last_attempt')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.people.map((p) => (
+                        <tr>
+                          <th scope="row"><a href={query({ user: p.userId, page: null })}>{p.name}</a></th>
+                          <td class="number">{p.attempts}</td>
+                          <td class="number">{pct(p.firstTimePassRate)}</td>
+                          <td class="number">{score(p.averageScore)}</td>
+                          <td class="number">{p.rejects}</td>
+                          <td>{formatDate(p.lastAttemptAt, lang)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p class="muted note">{t(lang, 'dq.people_note')}</p>
+              </>
+            )}
+          </section>
+        )}
+
+        {tab === 'checks' && (
+          <section aria-label={t(lang, 'dq.rules_title')}>
+            <p class="muted note">{t(lang, 'dq.rules_note', { pct: RULE_REVIEW_PCT })}</p>
+            {report.rules.length === 0 ? (
+              <EmptyState icon="rule" title={t(lang, 'dq.rules_none_title')} message={t(lang, 'dq.rules_none')} />
+            ) : (
+              <div class="card">
+                <BarList
+                  testId="rules"
+                  tone="sun"
+                  items={ruleTotals.map((r) => ({
+                    label: `${r.ruleId} ${ruleName(r.ruleId)}`,
+                    value: r.failures,
+                    href: `/rules?open=${encodeURIComponent(r.ruleId)}`,
+                    sub: t(lang, 'dq.rule_sub', { users: r.users }),
+                  }))}
+                />
+                <ShowNumbers testId="rules-numbers">
+                  <div class="table-wrap">
+                    <table class="data-table" data-testid="rules-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">{t(lang, 'dq.month')}</th>
+                          <th scope="col">{t(lang, 'dq.rule')}</th>
+                          <th scope="col" class="number">{t(lang, 'dq.failures')}</th>
+                          <th scope="col" class="number">{t(lang, 'dq.users_affected')}</th>
+                          <th scope="col" class="number">{t(lang, 'dq.pct_active')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {report.rules.map((r) => (
+                          <tr data-rule={r.ruleId}>
+                            <td>{monthLabel(r.month)}</td>
+                            <td>
+                              <strong>{r.ruleId}</strong> {ruleName(r.ruleId)}
+                              <br />
+                              <span class="muted">{t(lang, 'dq.example', { text: withoutRowPrefix(lang === 'fr' ? r.exampleFr : r.exampleEn) })}</span>
+                              {r.pctOfActiveUsers !== null && r.pctOfActiveUsers > RULE_REVIEW_PCT && (
+                                <>
+                                  <br />
+                                  <span class="badge" data-testid="review-rule">{t(lang, 'dq.review_rule')}</span>
+                                </>
+                              )}
+                            </td>
+                            <td class="number">{r.failures}</td>
+                            <td class="number">{r.usersAffected}</td>
+                            <td class="number">{pct(r.pctOfActiveUsers)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </ShowNumbers>
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === 'fix' && (
+          <section aria-label={t(lang, 'dq.fix_title')}>
+            <ul class="stats" data-testid="time-to-fix">
+              <StatCard label={t(lang, 'dq.fix_chains')} value={report.timeToFix.chains} />
+              <StatCard label={t(lang, 'dq.fix_fixed')} value={report.timeToFix.fixed} />
+              <StatCard label={t(lang, 'dq.fix_open')} value={report.timeToFix.notYetFixed} tone={report.timeToFix.notYetFixed > 0 ? 'amber' : 'default'} />
+              <StatCard label={t(lang, 'dq.fix_median')} value={report.timeToFix.medianHours === null ? t(lang, 'dq.not_yet') : fixTime(report.timeToFix.medianHours)} />
+              <StatCard label={t(lang, 'dq.fix_attempts')} value={report.timeToFix.averageAttempts === null ? t(lang, 'dq.not_yet') : score(report.timeToFix.averageAttempts)} />
+            </ul>
+            <p class="muted note">{t(lang, 'dq.fix_note')}</p>
+          </section>
+        )}
+
+        {tab === 'stale' && (
+          <section aria-label={t(lang, 'dq.stale_title')}>
+            {report.stale.length === 0 ? (
+              <EmptyState icon="clock" title={t(lang, 'dq.stale_none_title')} message={t(lang, 'dq.stale_none')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table" data-testid="stale">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t(lang, 'views.filter_owner')}</th>
+                      <th scope="col" class="number">{t(lang, 'dq.stale_items')}</th>
+                      <th scope="col" class="number">{t(lang, 'dq.stale_oldest')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.stale.map((s) => (
+                      <tr>
+                        <th scope="row">{s.personId ? <a href={`/pathway?owner=${s.personId}`}>{s.name}</a> : t(lang, 'dq.no_owner')}</th>
+                        <td class="number">{s.items}</td>
+                        <td class="number">{t(lang, 'dq.days', { n: s.oldestDays })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === 'attempts' && (
+          <section aria-label={t(lang, 'dq.attempts_title')}>
+            {report.attempts.rows.length === 0 ? (
+              <EmptyState icon="data" title={t(lang, 'dq.attempts_none_title')} message={t(lang, 'dq.no_attempts')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table" data-testid="attempts-list">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t(lang, 'dq.when')}</th>
+                      <th scope="col">{t(lang, 'dq.person')}</th>
+                      <th scope="col">{t(lang, 'dq.filter_route')}</th>
+                      <th scope="col" class="number">{t(lang, 'dq.attempt_no')}</th>
+                      <th scope="col" class="number">{t(lang, 'dq.score')}</th>
+                      <th scope="col">{t(lang, 'dq.outcome')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.attempts.rows.map((a) => (
+                      <tr data-submission={a.submissionId} data-outcome={a.outcome}>
+                        <td>{a.isUpload ? <a href={`/uploads/${a.submissionId}`}>{formatDateTime(a.startedAt, lang)}</a> : formatDateTime(a.startedAt, lang)}</td>
+                        <td>{a.name}</td>
+                        <td>{t(lang, `approvals.route_${a.route}` as MessageKey)}</td>
+                        <td class="number">{a.attemptNo}</td>
+                        <td class="number">{score(a.score)}</td>
+                        <td>
+                          <span class={`pill ${a.outcome === 'pass' ? 'pill-green' : 'pill-red'}`}>{a.outcome === 'pass' ? t(lang, 'dq.outcome_pass') : t(lang, 'dq.outcome_reject')}</span>
+                          {a.rejectReason && <span class="muted"> ({t(lang, `dq.reason_${a.rejectReason}` as MessageKey)})</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {pages > 1 && (
+              <nav class="pager">
+                {page > 1 && <a href={query({ page: String(page - 1) })}>{t(lang, 'items.previous')}</a>}
+                <span>{t(lang, 'items.page', { n: page })}</span>
+                {page < pages && <a href={query({ page: String(page + 1) })}>{t(lang, 'items.next')}</a>}
+              </nav>
+            )}
+          </section>
+        )}
+      </>
+    )
+  }
+</Base>
+
+<style>
+  .overview {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .overview h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-base);
+  }
+  .attention h3 {
+    margin: var(--space-4) 0 var(--space-1);
+    font-size: var(--text-sm);
+  }
+  .attention h3:first-of-type {
+    margin-top: 0;
+  }
+  .note {
+    margin: var(--space-2) 0;
+    font-size: var(--text-sm);
+  }
+  .attention > p,
+  .attention > .muted {
+    font-size: var(--text-sm);
+  }
+  .training,
+  .top-checks {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-2);
+  }
+  .training li {
+    display: grid;
+    gap: 0.125rem;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--text-md);
+  }
+  .training-rules {
+    font-size: var(--text-sm);
+  }
+  .inline-form {
+    margin-top: var(--space-1);
+  }
+  .btn-small {
+    min-height: 2rem;
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+  }
+  .top-checks li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    font-size: var(--text-md);
+  }
+  @media (max-width: 1023px) {
+    .overview {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

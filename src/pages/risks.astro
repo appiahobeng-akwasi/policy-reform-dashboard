@@ -1,0 +1,582 @@
+---
+// Risk and bottleneck view (spec 01 section 8, decision 90): what could stop delivery? Tiles for
+// the open risks by level and the overdue reviews, then three tabs: the register (one quiet row
+// per risk, the rest in the side panel), the 5 x 5 heatmap (inherent or residual), and blocked
+// or overdue items by owner and by institution. Internal users only (spec 01 section 3).
+import BarList from '../components/BarList.astro';
+import DataAsOf from '../components/DataAsOf.astro';
+import EmptyState from '../components/EmptyState.astro';
+import LinkTabs from '../components/LinkTabs.astro';
+import ReformChip from '../components/ReformChip.astro';
+import RiskHeatmap from '../components/RiskHeatmap.astro';
+import ShowNumbers from '../components/ShowNumbers.astro';
+import SidePanel from '../components/SidePanel.astro';
+import StatCard from '../components/StatCard.astro';
+import Base from '../layouts/Base.astro';
+import { formatDate, t } from '../i18n';
+import { asUser } from '../lib/server-db';
+import { dataAsOf, loadLabels } from '../lib/views';
+
+const PAGE_SIZE = 50;
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Frisks', 303);
+const internal = user.role !== 'viewer_counterpart';
+
+const params = Astro.url.searchParams;
+const cell = /^(inherent|residual)-([1-5])-([1-5])$/.exec(params.get('cell') ?? '');
+const status = params.get('status');
+const filter = {
+  reform: /^RA[0-9]$/.test(params.get('reform') ?? '') ? params.get('reform') : null,
+  // Active (open or monitoring) unless asked otherwise.
+  status: status === 'open' || status === 'monitoring' || status === 'closed' || status === 'all' ? status : 'active',
+  overdue: params.get('overdue') === '1',
+  cell: cell ? { kind: cell[1] as 'inherent' | 'residual', likelihood: Number(cell[2]), impact: Number(cell[3]) } : null,
+  page: Math.max(1, Number.parseInt(params.get('page') ?? '1', 10) || 1),
+};
+const TABS = ['register', 'heatmap', 'bottlenecks'] as const;
+type Tab = (typeof TABS)[number];
+const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'register';
+const map = params.get('map') === 'residual' ? 'residual' : 'inherent';
+const openRiskId = /^RK-[\w-]+$/.test(params.get('risk') ?? '') ? params.get('risk') : null;
+
+type Risk = {
+  risk_id: string;
+  category: string;
+  description: string;
+  likelihood: number | null;
+  impact: number | null;
+  inherent_score: number | null;
+  residual_likelihood: number | null;
+  residual_impact: number | null;
+  residual_score: number | null;
+  trigger: string | null;
+  mitigation: string | null;
+  owner: string | null;
+  review_date: string | null;
+  review_overdue: boolean;
+  status: string;
+  reforms: string[];
+  total: number;
+};
+type Bottleneck = { group_key: string | null; group_name: string | null; blocked: number; overdue: number; items: { type: string; id: string; name: string; blocker: string | null; days: number }[] };
+
+const data = internal
+  ? await asUser(user.claims, async (db) => {
+      const reforms = await db.query<{ reform_id: string }>('select reform_id from reforms order by reform_id');
+      // The heatmaps follow the reform and status filters, not the cell or page.
+      const scope = `from risks k
+         where ($1::text is null or exists (select 1 from risk_links l where l.risk_id = k.risk_id and l.object_type = 'reform' and l.object_id = $1))
+           and (case $2 when 'all' then true when 'active' then k.status <> 'closed' else k.status = $2 end)`;
+      const grid = await db.query<{ kind: string; l: number; i: number; n: number }>(
+        `select 'inherent' as kind, likelihood as l, impact as i, count(*)::int as n ${scope} and likelihood is not null and impact is not null group by 2, 3
+         union all
+         select 'residual', residual_likelihood, residual_impact, count(*)::int ${scope} and residual_likelihood is not null and residual_impact is not null group by 2, 3`,
+        [filter.reform, filter.status],
+      );
+      const list = await db.query<Risk>(
+        `select k.risk_id, k.category, k.description, k.likelihood, k.impact, k.inherent_score, k.residual_likelihood, k.residual_impact, k.residual_score,
+                k.trigger, k.mitigation, coalesce(p.full_name, k.owner_text) as owner, k.review_date,
+                coalesce(k.status <> 'closed' and k.review_date < current_date, false) as review_overdue, k.status,
+                coalesce((select array_agg(l.object_id order by l.object_id) from risk_links l where l.risk_id = k.risk_id and l.object_type = 'reform'), '{}') as reforms,
+                count(*) over ()::int as total
+           from risks k left join people p on p.person_id = k.owner_person_id
+          where ($1::text is null or exists (select 1 from risk_links l where l.risk_id = k.risk_id and l.object_type = 'reform' and l.object_id = $1))
+            and (case $2 when 'all' then true when 'active' then k.status <> 'closed' else k.status = $2 end)
+            and (not $3 or (k.status <> 'closed' and k.review_date < current_date))
+            and ($4::text is null or ($4 = 'inherent' and k.likelihood = $5 and k.impact = $6) or ($4 = 'residual' and k.residual_likelihood = $5 and k.residual_impact = $6))
+          order by k.inherent_score desc nulls last, k.risk_id
+          limit ${PAGE_SIZE} offset $7`,
+        [filter.reform, filter.status, filter.overdue, filter.cell?.kind ?? null, filter.cell?.likelihood ?? null, filter.cell?.impact ?? null, (filter.page - 1) * PAGE_SIZE],
+      );
+      // Bottlenecks: open items with a blocker or past their due date, by owner and by institution.
+      const bottlenecks = async (groupBy: 'owner' | 'institution') =>
+        (
+          await db.query<Bottleneck>(
+            `with stuck as (
+               select f.object_type, f.object_id, f.name, f.blocker, f.days_overdue, f.owner_person_id, p.full_name, p.institution_id,
+                      coalesce(i.acronym, i.name) as institution
+                 from v_delivery_flags f
+                 left join people p on p.person_id = f.owner_person_id
+                 left join institutions i on i.institution_id = p.institution_id
+                where f.status not in ('complete', 'cancelled') and (nullif(trim(f.blocker), '') is not null or f.days_overdue > 0)
+                  and ($1::text is null or f.reform_id = $1))
+             select ${groupBy === 'owner' ? 'owner_person_id::text' : 'institution_id::text'} as group_key,
+                    ${groupBy === 'owner' ? 'full_name' : 'institution'} as group_name,
+                    count(*) filter (where nullif(trim(blocker), '') is not null)::int as blocked,
+                    count(*) filter (where days_overdue > 0)::int as overdue,
+                    json_agg(json_build_object('type', object_type, 'id', object_id, 'name', name, 'blocker', blocker, 'days', days_overdue)
+                             order by days_overdue desc, object_id) as items
+               from stuck group by 1, 2
+              order by count(*) desc, 2 nulls last`,
+            [filter.reform],
+          )
+        ).rows;
+      const overdue = await db.query<{ n: number }>(
+        `select count(*)::int as n from risks k
+          where ($1::text is null or exists (select 1 from risk_links l where l.risk_id = k.risk_id and l.object_type = 'reform' and l.object_id = $1))
+            and k.status <> 'closed' and k.review_date < current_date`,
+        [filter.reform],
+      );
+      // The risk in the side panel, wherever it sits in the list.
+      const open = openRiskId
+        ? await db.query<Risk>(
+            `select k.risk_id, k.category, k.description, k.likelihood, k.impact, k.inherent_score, k.residual_likelihood, k.residual_impact, k.residual_score,
+                    k.trigger, k.mitigation, coalesce(p.full_name, k.owner_text) as owner, k.review_date,
+                    coalesce(k.status <> 'closed' and k.review_date < current_date, false) as review_overdue, k.status,
+                    coalesce((select array_agg(l.object_id order by l.object_id) from risk_links l where l.risk_id = k.risk_id and l.object_type = 'reform'), '{}') as reforms,
+                    1 as total
+               from risks k left join people p on p.person_id = k.owner_person_id where k.risk_id = $1`,
+            [openRiskId],
+          )
+        : null;
+      return {
+        reviewsOverdue: overdue.rows[0]?.n ?? 0,
+        openRisk: open?.rows[0] ?? null,
+        reforms: reforms.rows.map((r) => r.reform_id),
+        grid: grid.rows,
+        list: list.rows,
+        byOwner: await bottlenecks('owner'),
+        byInstitution: await bottlenecks('institution'),
+        asOf: await dataAsOf(db, 'risks'),
+        label: await loadLabels(db, ['risk_category', 'risk_status'], lang),
+      };
+    })
+  : null;
+
+const matrix = (kind: string) => {
+  const m = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => 0));
+  for (const g of data?.grid ?? []) if (g.kind === kind) m[g.l - 1]![g.i - 1] = g.n;
+  return m;
+};
+const link = (changes: Record<string, string | null>) => {
+  const p = new URLSearchParams(params);
+  p.delete('page');
+  if (!('risk' in changes)) p.delete('risk');
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null) p.delete(k);
+    else p.set(k, v);
+  }
+  const query = p.toString();
+  return `/risks${query ? `?${query}` : ''}`;
+};
+const level = (score: number | null) => (score === null ? 'none' : score >= 15 ? 'high' : score >= 8 ? 'medium' : 'low');
+const scoreDetail = (score: number | null, l: number | null, i: number | null) =>
+  score === null ? t(lang, 'risks.not_scored') : l !== null && i !== null ? t(lang, 'risks.score_detail', { score, likelihood: l, impact: i }) : String(score);
+const total = data?.list[0]?.total ?? 0;
+// Risks by level, from the same inherent scores and bands as the heatmap (15 and over high).
+const levels = { high: 0, medium: 0, low: 0 };
+for (const g of data?.grid ?? []) {
+  if (g.kind !== 'inherent') continue;
+  const score = g.l * g.i;
+  levels[score >= 15 ? 'high' : score >= 8 ? 'medium' : 'low'] += g.n;
+}
+const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+---
+
+<Base title={t(lang, 'risks.title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'risks.title')}</h1>
+    <p>{t(lang, 'risks.question')}</p>
+  </div>
+  {
+    !data ? (
+      <p class="notice">{t(lang, 'risks.not_allowed')}</p>
+    ) : (
+      <>
+        <DataAsOf value={data.asOf} />
+        <form method="get" class="filters">
+          <input type="hidden" name="tab" value={tab} />
+          {tab === 'heatmap' && <input type="hidden" name="map" value={map} />}
+          <div>
+            <label for="reform">{t(lang, 'views.filter_reform')}</label>
+            <select id="reform" name="reform">
+              <option value="">{t(lang, 'views.all')}</option>
+              {data.reforms.map((r) => <option value={r} selected={filter.reform === r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="status">{t(lang, 'views.filter_status')}</label>
+            <select id="status" name="status">
+              <option value="active" selected={filter.status === 'active'}>{t(lang, 'risks.status_active')}</option>
+              {['open', 'monitoring', 'closed'].map((s) => <option value={s} selected={filter.status === s}>{data.label('risk_status', s)}</option>)}
+              <option value="all" selected={filter.status === 'all'}>{t(lang, 'views.all')}</option>
+            </select>
+          </div>
+          <label class="inline">
+            <input type="checkbox" name="overdue" value="1" checked={filter.overdue} />
+            {t(lang, 'risks.overdue_only')}
+          </label>
+          <button class="btn btn-secondary" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+
+        <ul class="stats" data-testid="risk-levels" aria-label={t(lang, 'risks.levels_label', { high: levels.high, medium: levels.medium, low: levels.low })}>
+          <StatCard label={t(lang, 'risks.level_high')} value={levels.high} dot="red" testId="level-high" />
+          <StatCard label={t(lang, 'risks.level_medium')} value={levels.medium} dot="amber" testId="level-medium" />
+          <StatCard label={t(lang, 'risks.level_low')} value={levels.low} dot="green" testId="level-low" />
+          <StatCard
+            label={t(lang, 'risks.reviews_overdue')}
+            value={data.reviewsOverdue}
+            tone={data.reviewsOverdue > 0 ? 'red' : 'default'}
+            href={link({ tab: 'register', overdue: filter.overdue ? null : '1', cell: null })}
+            selected={filter.overdue}
+            testId="reviews-overdue"
+          />
+        </ul>
+
+        <LinkTabs
+          label={t(lang, 'risks.tabs_label')}
+          current={tab}
+          tabs={[
+            { key: 'register', label: t(lang, 'risks.tab_register'), count: total, href: link({ tab: 'register', map: null }) },
+            { key: 'heatmap', label: t(lang, 'risks.tab_heatmap'), href: link({ tab: 'heatmap' }) },
+            { key: 'bottlenecks', label: t(lang, 'risks.tab_bottlenecks'), count: data.byOwner.reduce((n, g) => n + g.blocked + g.overdue, 0), href: link({ tab: 'bottlenecks', map: null }) },
+          ]}
+        />
+
+        {tab === 'register' && (
+          <section id="risk-list" aria-label={t(lang, 'risks.list')}>
+            {filter.cell && (
+              <p class="notice">
+                {t(lang, filter.cell.kind === 'inherent' ? 'risks.cell_filter_inherent' : 'risks.cell_filter_residual', { likelihood: filter.cell.likelihood, impact: filter.cell.impact })}{' '}
+                <a href={link({ cell: null })}>{t(lang, 'risks.clear_cell')}</a>
+              </p>
+            )}
+            {data.list.length === 0 ? (
+              <EmptyState icon="risks" title={t(lang, 'risks.none_title')} message={t(lang, 'risks.none')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table register" data-testid="risk-list">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="col-id">{t(lang, 'risks.col_id')}</th>
+                      <th scope="col">{t(lang, 'reviews.risk')}</th>
+                      <th scope="col" class="col-score">{t(lang, 'risks.col_score')}</th>
+                      <th scope="col" class="col-owner">{t(lang, 'reviews.owner')}</th>
+                      <th scope="col" class="col-review">{t(lang, 'reviews.review_due')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.list.map((k) => (
+                      <tr data-risk={k.risk_id} aria-current={openRiskId === k.risk_id ? 'true' : undefined}>
+                        <td class="col-id">{k.risk_id}</td>
+                        <th scope="row" class="risk-cell">
+                          <a class="risk-link" href={link({ risk: k.risk_id })}>{k.description}</a>
+                          <span class="risk-sub">
+                            {data.label('risk_category', k.category)}
+                            {k.reforms.length > 0 && <> · {k.reforms.join(', ')}</>}
+                            {k.status !== 'open' && (
+                              <>
+                                {' '}
+                                <span class="badge">{data.label('risk_status', k.status)}</span>
+                              </>
+                            )}
+                          </span>
+                        </th>
+                        <td class="col-score">
+                          <span class={`score score-${level(k.inherent_score)}`}>{k.inherent_score ?? '?'}</span>
+                          <span class="score-arrow" aria-hidden="true">→</span>
+                          <span class="score-residual">{k.residual_score ?? '?'}</span>
+                          <span class="visually-hidden">{t(lang, 'risks.score_sr', { inherent: k.inherent_score ?? '?', residual: k.residual_score ?? '?' })}</span>
+                        </td>
+                        <td class="col-owner">{k.owner ?? <span class="muted">{t(lang, 'dq.no_owner')}</span>}</td>
+                        <td class="col-review">
+                          {k.review_date ? formatDate(k.review_date, lang) : <span class="muted">{t(lang, 'risks.not_set')}</span>}
+                          {k.review_overdue && (
+                            <span class="late" data-testid="review-overdue">
+                              {t(lang, 'reviews.overdue')}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {pages > 1 && (
+              <nav class="pager">
+                {filter.page > 1 && <a href={`${link({ page: String(filter.page - 1) })}`}>{t(lang, 'items.previous')}</a>}
+                <span>{t(lang, 'items.page', { n: filter.page })}</span>
+                {filter.page < pages && <a href={`${link({ page: String(filter.page + 1) })}`}>{t(lang, 'items.next')}</a>}
+              </nav>
+            )}
+          </section>
+        )}
+
+        {tab === 'heatmap' && (
+          <section class="heat" aria-label={t(lang, 'risks.tab_heatmap')}>
+            <nav class="seg" aria-label={t(lang, 'risks.map_label')}>
+              <a href={link({ map: null })} aria-current={map === 'inherent' ? 'page' : undefined}>{t(lang, 'risks.inherent')}</a>
+              <a href={link({ map: 'residual' })} aria-current={map === 'residual' ? 'page' : undefined}>{t(lang, 'risks.residual')}</a>
+            </nav>
+            <div class="heat-map">
+              <RiskHeatmap
+                counts={matrix(map)}
+                title={t(lang, map === 'inherent' ? 'risks.inherent' : 'risks.residual')}
+                href={(l, i) => link({ tab: 'register', map: null, cell: `${map}-${l}-${i}` })}
+                testId={`heatmap-${map}`}
+              />
+            </div>
+          </section>
+        )}
+
+        {tab === 'bottlenecks' && (
+          <div class="bottlenecks">
+            {(['owner', 'institution'] as const).map((by) => {
+              const groups = by === 'owner' ? data.byOwner : data.byInstitution;
+              return (
+                <section class="card bottleneck-card" aria-labelledby={`by-${by}`}>
+                  <h2 id={`by-${by}`}>{t(lang, by === 'owner' ? 'risks.by_owner' : 'risks.by_institution')}</h2>
+                  {groups.length === 0 ? (
+                    <EmptyState icon="approvals" title={t(lang, 'risks.no_bottlenecks_title')} message={t(lang, 'risks.no_bottlenecks')} />
+                  ) : (
+                    <>
+                      <BarList
+                        testId={`bottlenecks-${by}`}
+                        items={groups.map((g) => ({
+                          label: g.group_name ?? t(lang, by === 'owner' ? 'dq.no_owner' : 'risks.no_institution'),
+                          value: g.blocked + g.overdue,
+                          sub: t(lang, 'risks.bar_sub', { blocked: g.blocked, overdue: g.overdue }),
+                        }))}
+                      />
+                      <ShowNumbers testId={`bottlenecks-${by}-numbers`}>
+                        <div class="table-wrap">
+                          <table class="data-table" data-testid={`bottlenecks-${by}-table`}>
+                            <thead>
+                              <tr>
+                                <th scope="col">{t(lang, by === 'owner' ? 'reviews.owner' : 'admin.institution')}</th>
+                                <th scope="col" class="number">{t(lang, 'risks.blocked')}</th>
+                                <th scope="col" class="number">{t(lang, 'views.overdue')}</th>
+                                <th scope="col">{t(lang, 'risks.items')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {groups.map((g) => (
+                                <tr>
+                                  <th scope="row">{g.group_name ?? t(lang, by === 'owner' ? 'dq.no_owner' : 'risks.no_institution')}</th>
+                                  <td class="number">{g.blocked}</td>
+                                  <td class="number">{g.overdue}</td>
+                                  <td>
+                                    <ul class="items">
+                                      {g.items.slice(0, 5).map((i) => (
+                                        <li>
+                                          <a href={`/items/${i.type}/${i.id}`}>{i.id}</a> {i.name}
+                                          {i.days > 0 && <span class="muted"> ({t(lang, 'risks.days_late', { n: i.days })})</span>}
+                                          {i.blocker && <span class="muted"> {t(lang, 'risks.blocker', { text: i.blocker })}</span>}
+                                        </li>
+                                      ))}
+                                      {g.items.length > 5 && <li class="muted">{t(lang, 'risks.more', { n: g.items.length - 5 })}</li>}
+                                    </ul>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </ShowNumbers>
+                    </>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
+
+        {openRiskId && !data.openRisk && (
+          <SidePanel title={openRiskId} closeHref={link({ risk: null })}>
+            <p>{t(lang, 'risks.not_found')}</p>
+          </SidePanel>
+        )}
+        {data.openRisk && (
+          <SidePanel title={data.openRisk.risk_id} closeHref={link({ risk: null })}>
+            <p class="panel-lead">{data.openRisk.description}</p>
+            <p class="panel-chips">
+              <span class={`score score-${level(data.openRisk.inherent_score)}`}>{data.openRisk.inherent_score ?? '?'}</span>
+              <span class="badge">{data.label('risk_status', data.openRisk.status)}</span>
+              {data.openRisk.reforms.map((r) => <ReformChip reformId={r} label={r} />)}
+            </p>
+            <dl class="panel-facts" data-testid="risk-facts">
+              <dt>{t(lang, 'risks.category')}</dt>
+              <dd>{data.label('risk_category', data.openRisk.category)}</dd>
+              <dt>{t(lang, 'risks.inherent')}</dt>
+              <dd>{scoreDetail(data.openRisk.inherent_score, data.openRisk.likelihood, data.openRisk.impact)}</dd>
+              <dt>{t(lang, 'risks.residual')}</dt>
+              <dd>{scoreDetail(data.openRisk.residual_score, data.openRisk.residual_likelihood, data.openRisk.residual_impact)}</dd>
+              <dt>{t(lang, 'risks.trigger')}</dt>
+              <dd>{data.openRisk.trigger ?? <span class="muted">{t(lang, 'risks.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'risks.mitigation')}</dt>
+              <dd>{data.openRisk.mitigation ?? <span class="muted">{t(lang, 'risks.not_recorded')}</span>}</dd>
+              <dt>{t(lang, 'reviews.owner')}</dt>
+              <dd>{data.openRisk.owner ?? <span class="muted">{t(lang, 'dq.no_owner')}</span>}</dd>
+              <dt>{t(lang, 'reviews.review_due')}</dt>
+              <dd>
+                {data.openRisk.review_date ? formatDate(data.openRisk.review_date, lang) : <span class="muted">{t(lang, 'risks.not_set')}</span>}
+                {data.openRisk.review_overdue && <span class="late">{t(lang, 'reviews.overdue')}</span>}
+              </dd>
+            </dl>
+          </SidePanel>
+        )}
+      </>
+    )
+  }
+</Base>
+
+<style>
+  .inline {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    font-weight: var(--weight-normal);
+    min-height: 2.75rem;
+  }
+  .register .col-id {
+    width: 5.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .register .col-score {
+    width: 7rem;
+    white-space: nowrap;
+  }
+  .register .col-owner {
+    width: 10rem;
+  }
+  .register .col-review {
+    width: 8.5rem;
+  }
+  .risk-cell {
+    font-weight: var(--weight-normal);
+  }
+  .risk-link {
+    display: block;
+    color: var(--color-text);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+  }
+  .risk-link:hover,
+  .risk-link:focus-visible {
+    text-decoration: underline;
+  }
+  .risk-sub {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .register tr[aria-current='true'] {
+    background: var(--color-accent-soft);
+  }
+  .score {
+    display: inline-block;
+    min-width: 2rem;
+    padding: 0.05rem var(--space-2);
+    border-radius: var(--radius-round);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-bold);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .score-high {
+    background: var(--color-rag-red-bg) var(--gradient-red-soft);
+    color: var(--color-rag-red);
+  }
+  .score-medium {
+    background: var(--color-rag-amber-bg) var(--gradient-amber-soft);
+    color: var(--color-rag-amber);
+  }
+  .score-low,
+  .score-none {
+    background: var(--color-rag-grey-bg) var(--gradient-grey-soft);
+    color: var(--color-rag-grey);
+  }
+  .score-arrow,
+  .score-residual {
+    margin-left: var(--space-1);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .late {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-rag-red);
+  }
+  .heat {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-4);
+  }
+  .heat-map {
+    width: min(100%, 26rem);
+  }
+  .seg {
+    display: flex;
+    gap: var(--space-1);
+    padding: 0.2rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .seg a {
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-round);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+    text-decoration: none;
+  }
+  .seg a[aria-current='page'] {
+    background: var(--color-forest);
+    color: var(--color-primary-contrast);
+  }
+  .bottlenecks {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .bottleneck-card h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-base);
+  }
+  .items {
+    margin: 0;
+    padding-left: var(--space-4);
+  }
+  .panel-lead {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    line-height: 1.4;
+  }
+  .panel-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-4);
+  }
+  .panel-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-3) var(--space-4);
+    margin: 0;
+    font-size: var(--text-md);
+  }
+  .panel-facts dt {
+    color: var(--color-text-muted);
+  }
+  .panel-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 767px) {
+    .register .col-owner {
+      display: none;
+    }
+    .register .col-id {
+      width: 4.5rem;
+    }
+  }
+</style>

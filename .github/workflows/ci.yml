@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: Typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run check:bundle
+      - name: Build for Vercel too (decision 88)
+        run: npm run build
+        env:
+          ASTRO_ADAPTER: vercel
+      - name: No known high-severity vulnerability in what ships
+        run: npm audit --omit=dev --audit-level=high
+
+  database:
+    name: Migrations and seed on fresh Postgres ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Plain Postgres, not the Supabase image: proves the schema has no vendor lock-in.
+        # 15 is the minimum supported; 17 is what local Supabase runs.
+        postgres: ['15', '17']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway CI database on the runner; not a secret.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Rebuild from scratch (npm run db:reset)
+        run: npm run db:reset
+      - name: Database tests
+        run: npm run test:db
+      - name: Reset again (must be repeatable)
+        run: npm run db:reset
+      - name: Migrate on an up-to-date database applies nothing
+        run: npm run db:migrate
+
+  e2e:
+    name: End to end on local Supabase (sign-in, update card, uploads, jobs)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+      APP_BASE_URL: http://localhost:4321
+      SUPABASE_URL: http://127.0.0.1:54321
+      S3_ENDPOINT: http://127.0.0.1:54321/storage/v1/s3
+      S3_REGION: local
+      S3_BUCKET: dashboard-files
+      # Mailpit in the local stack catches reminder emails; nothing is really sent.
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 54325
+      # A throwaway value for the test run only.
+      JOBS_SECRET: ci-only-jobs-secret
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.75.0
+      # Only what the app needs: database, auth, file storage, API gateway and the mail catcher.
+      - name: Start local Supabase
+        run: supabase start -x studio,imgproxy,vector,logflare,supavisor,postgres-meta,realtime,edge-runtime
+      - name: Read the local keys (public defaults of the local stack, not secrets)
+        run: |
+          status="$(supabase status -o env)"
+          value() { printf '%s\n' "$status" | sed -n "s/^$1=\"\(.*\)\"$/\1/p"; }
+          {
+            echo "SUPABASE_PUBLISHABLE_KEY=$(value PUBLISHABLE_KEY)"
+            echo "SUPABASE_SECRET_KEY=$(value SECRET_KEY)"
+            echo "S3_ACCESS_KEY_ID=$(value S3_PROTOCOL_ACCESS_KEY_ID)"
+            echo "S3_SECRET_ACCESS_KEY=$(value S3_PROTOCOL_ACCESS_KEY_SECRET)"
+          } >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm run db:reset
+      - run: npm run storage:setup
+      - name: Database tests on Supabase (includes the sign-in hook)
+        run: npm run test:db
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
+      - name: Backup, restore into a fresh database and bucket, compare
+        run: |
+          npm run backup -- --out /tmp/backups
+          folder="$(ls -d /tmp/backups/* | tail -1)"
+          docker exec supabase_db_ggp-pillar1-dashboard createdb -U postgres restore_check
+          S3_BUCKET=restore-check npm run restore -- "$folder" --to postgresql://postgres:postgres@127.0.0.1:54322/restore_check
+          # A database that already has the app's tables is refused.
+          if S3_BUCKET=restore-check npm run restore -- "$folder" --to postgresql://postgres:postgres@127.0.0.1:54322/restore_check --skip-files; then exit 1; fi
+      - name: Load test (50 people, 30 seconds)
+        run: |
+          npm start > /tmp/server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:4321/healthz && break; sleep 1; done
+          npm run load-test -- --url http://localhost:4321 --duration 30
+          # Capacity on this runner, for the record (no target: CI machines vary).
+          npm run load-test -- --url http://localhost:4321 --duration 10 --think 0 --accounts 2 || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

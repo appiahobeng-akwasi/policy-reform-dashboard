@@ -1,0 +1,77 @@
+---
+// A ring split into parts, the main number in its middle (docs/08 v0.2 section 4). Drawn by the
+// server as SVG: each part is one closed outline (its arc and round ends), shaded from light to
+// deep by slices clipped to that outline, so edges are smooth, gaps are even and nothing overlaps.
+// The label says in words what the ring shows, and the page lists the parts with their numbers,
+// so colour is never the only signal.
+import { gauge as gaugeOf, ring, type ChartColour, type RingPart } from '../lib/charts';
+
+interface Props {
+  /** Unique on the page: the gradients and outlines are named after it. */
+  id: string;
+  size: number;
+  /** The parts of a whole; or, for a gauge, one score out of a maximum. */
+  parts?: RingPart[];
+  gauge?: { value: number | null; max: number; colour: ChartColour } | undefined;
+  label: string;
+  /** Colour of the empty track behind the parts. */
+  track?: string;
+}
+const { id, size, parts = [], gauge, label, track = 'rgb(255 255 255 / 10%)' } = Astro.props;
+const geometry = gauge ? gaugeOf(size, gauge.value, gauge.max, gauge.colour) : ring(size, parts);
+const { centre, radius, width } = geometry;
+---
+
+<div class="ring">
+  <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label={label}>
+    <defs>
+      {
+        geometry.segments.map((s, i) => (
+          <clipPath id={`${id}-clip-${i}`}>
+            <path d={s.outline} clip-rule={s.evenOdd ? 'evenodd' : 'nonzero'} />
+          </clipPath>
+        ))
+      }
+      {
+        geometry.segments.flatMap((s, i) =>
+          s.wedges.map((w, j) => (
+            <linearGradient id={`${id}-${i}-${j}`} gradientUnits="userSpaceOnUse" x1={w.from[0]} y1={w.from[1]} x2={w.to[0]} y2={w.to[1]}>
+              <stop offset="0" stop-color={w.stops[0]} />
+              <stop offset="1" stop-color={w.stops[1]} />
+            </linearGradient>
+          )),
+        )
+      }
+    </defs>
+    <circle cx={centre} cy={centre} r={radius} fill="none" stroke={track} stroke-width={width}></circle>
+    {
+      geometry.segments.map((s, i) => (
+        <g clip-path={`url(#${id}-clip-${i})`}>
+          {s.wedges.map((w, j) => (
+            <path d={w.d} fill={`url(#${id}-${i}-${j})`} />
+          ))}
+        </g>
+      ))
+    }
+  </svg>
+  <div class="ring-centre" aria-hidden="true"><slot /></div>
+</div>
+
+<style>
+  /* Sized by the SVG inside, not a style attribute (the content policy allows no inline styles). */
+  .ring {
+    position: relative;
+    display: inline-block;
+    flex: none;
+  }
+  .ring svg {
+    display: block;
+  }
+  .ring-centre {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    text-align: center;
+  }
+</style>

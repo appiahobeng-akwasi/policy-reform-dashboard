@@ -1,0 +1,32 @@
+{
+  "rule": "B14",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "comments": "Waiting for the minister's signature"
+        },
+        "id": "MS-001"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "comments": "<script>alert(1)</script>"
+        },
+        "id": "MS-001"
+      }
+    ],
+    "expect": {
+      "field": "comments"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+---
+// RAG rating with its text, never colour alone (docs/01 section 11, docs/08: soft pills).
+interface Props {
+  rag: string;
+  label: string;
+}
+const { rag, label } = Astro.props;
+const tone = ['green', 'amber', 'red', 'grey', 'blue'].includes(rag) ? rag : 'grey';
+---
+
+<span class={`pill pill-${tone} rag rag-${rag}`}>{label}</span>

@@ -1,0 +1,53 @@
+{
+  "rule": "Q13",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "decision",
+        "op": "create",
+        "fields": {
+          "decision_date": "2026-11-12",
+          "decision_type": "adapt",
+          "summary": "Move the validation workshop to January",
+          "status": "open",
+          "follow_up_action": "Book the venue for January",
+          "follow_up_owner_person_id": "11111111-1111-4111-8111-111111111111",
+          "follow_up_due": "2026-12-05"
+        },
+        "links": [
+          {
+            "object_type": "reform",
+            "object_id": "RA1"
+          }
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "decision",
+        "op": "create",
+        "fields": {
+          "decision_date": "2026-11-12",
+          "decision_type": "adapt",
+          "summary": "Move the validation workshop to January",
+          "status": "open",
+          "follow_up_action": "Book the venue for January",
+          "follow_up_due": "2026-12-05"
+        },
+        "links": [
+          {
+            "object_type": "reform",
+            "object_id": "RA1"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "field": "follow_up_owner_person_id"
+    }
+  }
+}

@@ -1,0 +1,202 @@
+---
+// The brand panel of the sign-in pages (decision 90): forest green, the Green Growth Programme
+// name, Pillar 1, a short headline and the three reform areas, over faint contour lines like a
+// land survey map. All drawn inline (nothing to download, CLAUDE.md rule 9); the lines are
+// decorative, the words are real text in both languages.
+import { t } from '../i18n';
+import BrandMark from './BrandMark.astro';
+import Icon from './Icon.astro';
+
+const { lang } = Astro.locals;
+const areas = [
+  { icon: 'land', key: 'auth.brand_ra1' },
+  { icon: 'coin', key: 'auth.brand_ra2' },
+  { icon: 'sprout', key: 'auth.brand_ra3' },
+] as const;
+---
+
+<section class="auth-brand" aria-labelledby="auth-brand-name">
+  <svg class="auth-contours" viewBox="0 0 640 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+    <g fill="none" stroke="#5dcaa5" stroke-width="1.2">
+      <path opacity="0.10" d="M-40 690c120-50 210 40 330-10s200-90 380-30"></path>
+      <path opacity="0.12" d="M-40 735c130-55 220 50 345-5s210-85 375-25"></path>
+      <path opacity="0.14" d="M-40 780c140-60 230 55 355 0s215-80 370-20"></path>
+      <path opacity="0.16" d="M-40 825c150-60 240 60 365 5s220-75 365-15"></path>
+      <path opacity="0.18" d="M-40 870c160-65 250 65 375 10s225-70 360-10"></path>
+      <path opacity="0.10" d="M380 120c80-45 190-10 210 80s-50 170-140 165-160-70-150-150 30-70 80-95z"></path>
+      <path opacity="0.13" d="M405 150c62-34 150-6 165 63s-40 130-108 126-122-54-115-114 22-53 58-75z"></path>
+      <path opacity="0.16" d="M430 180c44-24 108-4 118 46s-28 93-77 90-88-38-82-82 16-38 41-54z"></path>
+      <path opacity="0.20" d="M455 208c26-14 64-2 70 27s-17 55-46 53-52-23-48-48 9-23 24-32z"></path>
+    </g>
+    <circle cx="482" cy="240" r="4" fill="#9fe1cb" opacity="0.55"></circle>
+  </svg>
+
+  <div class="auth-brand-top">
+    <BrandMark />
+    <p class="auth-brand-name" id="auth-brand-name">
+      <strong>{t(lang, 'auth.brand_programme')}</strong>
+      <span>{t(lang, 'auth.brand_country')}</span>
+    </p>
+  </div>
+
+  <div class="auth-brand-body">
+    <p class="auth-brand-pillar">{t(lang, 'auth.brand_pillar')}</p>
+    <p class="auth-brand-headline">
+      <span>{t(lang, 'auth.brand_headline_1')}</span>
+      <span>{t(lang, 'auth.brand_headline_2')}</span>
+    </p>
+    <p class="auth-brand-text">{t(lang, 'auth.brand_body')}</p>
+    <ul class="auth-brand-areas" aria-label={t(lang, 'auth.brand_areas')}>
+      {
+        areas.map((a) => (
+          <li>
+            <span class="auth-brand-icon" aria-hidden="true"><Icon name={a.icon} /></span>
+            {t(lang, a.key)}
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+
+  <p class="auth-brand-foot">{t(lang, 'app.name')} · <span>{t(lang, 'app.prototype_badge')}</span></p>
+</section>
+
+<style>
+  .auth-brand {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: var(--space-8);
+    padding: var(--space-8) clamp(var(--space-6), 5vw, 4.5rem);
+    background: var(--color-forest) var(--gradient-forest);
+    color: #ffffff;
+    overflow: hidden;
+  }
+  .auth-contours {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .auth-brand-top,
+  .auth-brand-body,
+  .auth-brand-foot {
+    position: relative;
+  }
+  .auth-brand-top {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .auth-brand-top :global(.brand-mark) {
+    width: 2.5rem;
+    height: 2.5rem;
+    background: rgb(255 255 255 / 10%);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
+  }
+  .auth-brand-name {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    line-height: 1.3;
+  }
+  .auth-brand-name strong {
+    font-weight: var(--weight-bold);
+    letter-spacing: 0.005em;
+  }
+  .auth-brand-name span {
+    font-size: var(--text-sm);
+    color: var(--color-forest-text);
+  }
+  .auth-brand-body {
+    max-width: 32rem;
+  }
+  .auth-brand-pillar {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-forest-text);
+    letter-spacing: 0.01em;
+  }
+  .auth-brand-headline {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0 var(--space-4);
+    font-size: clamp(2rem, 3.4vw, 3rem);
+    font-weight: var(--weight-heavy);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+  .auth-brand-headline span:last-child {
+    color: #b8f0d4;
+  }
+  .auth-brand-text {
+    margin: 0;
+    max-width: 26rem;
+    font-size: var(--text-base);
+    line-height: 1.6;
+    color: #d3eee2;
+  }
+  .auth-brand-areas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: var(--space-6) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .auth-brand-areas li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0.35rem 0.8rem;
+    border-radius: var(--radius-round);
+    background: rgb(255 255 255 / 7%);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+    font-size: var(--text-sm);
+    color: #e6f7ef;
+  }
+  .auth-brand-icon {
+    display: inline-flex;
+    width: 1rem;
+    height: 1rem;
+    color: #9fe1cb;
+  }
+  .auth-brand-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+  .auth-brand-foot {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--color-forest-text);
+  }
+  .auth-brand-foot span {
+    padding: 0.1rem 0.5rem;
+    border-radius: var(--radius-round);
+    background: rgb(255 255 255 / 10%);
+  }
+
+  /* On a phone: a compact band above the form. */
+  @media (max-width: 767px) {
+    .auth-brand {
+      gap: var(--space-4);
+      padding: var(--space-6) var(--space-4) var(--space-8);
+    }
+    .auth-brand-headline {
+      font-size: 1.75rem;
+      margin-bottom: var(--space-2);
+    }
+    .auth-brand-text {
+      font-size: var(--text-md);
+    }
+    .auth-brand-areas {
+      margin-top: var(--space-4);
+    }
+    .auth-brand-foot {
+      display: none;
+    }
+  }
+</style>

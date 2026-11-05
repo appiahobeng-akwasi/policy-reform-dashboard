@@ -1,0 +1,22 @@
+---
+// The leaf shapes behind a hero card (docs/08 v0.2 section 3). Decoration only, about 1 KB.
+interface Props {
+  /** Unique on the page: the gradients are named after it. */
+  id: string;
+}
+const { id } = Astro.props;
+---
+
+<svg class="hero-leaves" viewBox="0 0 400 300" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id={`${id}-blob`} gradientUnits="userSpaceOnUse" x1="60" y1="50" x2="330" y2="290"><stop offset="0" stop-color="#1f7560" /><stop offset="1" stop-color="#123f34" /></linearGradient>
+    <linearGradient id={`${id}-leaf1`} gradientUnits="userSpaceOnUse" x1="330" y1="90" x2="250" y2="230"><stop offset="0" stop-color="#3fae85" /><stop offset="1" stop-color="#1b6650" /></linearGradient>
+    <linearGradient id={`${id}-leaf2`} gradientUnits="userSpaceOnUse" x1="380" y1="210" x2="250" y2="230"><stop offset="0" stop-color="#6fd3a0" /><stop offset="1" stop-color="#23805f" /></linearGradient>
+    <linearGradient id={`${id}-sun`} gradientUnits="userSpaceOnUse" x1="290" y1="70" x2="314" y2="98"><stop offset="0" stop-color="#ffd66e" /><stop offset="1" stop-color="#f0971c" /></linearGradient>
+  </defs>
+  <path d="M60 210C20 150 60 60 150 50s180-20 220 60 0 170-90 180S100 270 60 210z" fill={`url(#${id}-blob)`}></path>
+  <path d="M250 230c-10-60 20-120 80-140-10 60-30 110-80 140z" fill={`url(#${id}-leaf1)`}></path>
+  <path d="M250 230c40-30 90-40 130-20-40 30-90 40-130 20z" fill={`url(#${id}-leaf2)`}></path>
+  <path d="M300 70l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill={`url(#${id}-sun)`}></path>
+  <circle cx="210" cy="60" r="4" fill="#8fd14f"></circle>
+</svg>

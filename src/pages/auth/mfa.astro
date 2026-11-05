@@ -1,0 +1,92 @@
+---
+// Second sign-in step for roles that need MFA (super_admin, programme_admin). Until it is
+// done, the database treats the session as nobody (migration 0007).
+import Icon from '../../components/Icon.astro';
+import Base from '../../layouts/Base.astro';
+import { t } from '../../i18n';
+import type { TotpEnrolment } from '../../lib/auth';
+import { needsMfa, signInPath } from '../../lib/auth/access';
+import { safeReturnPath } from '../../lib/http';
+
+const { lang, user, auth } = Astro.locals;
+const next = safeReturnPath(Astro.url.searchParams.get('next'));
+if (!user) return Astro.redirect(signInPath('/auth/mfa'), 303);
+if (!needsMfa(user)) return Astro.redirect(next, 303);
+
+let factorId = await auth.mfa.verifiedTotpFactor();
+let enrolment: TotpEnrolment | null = null;
+let error: 'code_wrong' | 'failed' | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (form.get('action') === 'enrol' && !factorId) {
+    enrolment = await auth.mfa.enrolTotp();
+    if (!enrolment) error = 'failed';
+  } else if (form.get('action') === 'verify') {
+    const code = String(form.get('code') ?? '').replace(/\s/g, '');
+    const target = factorId ?? String(form.get('factor_id') ?? '');
+    if (target && /^\d{6}$/.test(code) && (await auth.mfa.verify(target, code))) {
+      return Astro.redirect(next, 303);
+    }
+    error = 'code_wrong';
+    if (!factorId && target) factorId = target;
+  }
+}
+
+const settingUp = !(await auth.mfa.verifiedTotpFactor());
+const showCodeForm = !settingUp || enrolment !== null || factorId !== null;
+---
+
+<Base title={t(lang, settingUp ? 'mfa.setup_title' : 'mfa.verify_title')} variant="auth">
+  <div class="auth-form">
+    <span class="auth-icon" aria-hidden="true"><Icon name="quality" /></span>
+    <h1>{t(lang, settingUp ? 'mfa.setup_title' : 'mfa.verify_title')}</h1>
+    {error && <p class="error" role="alert">{t(lang, error === 'code_wrong' ? 'mfa.code_wrong' : 'mfa.failed')}</p>}
+    {settingUp && <p class="auth-lead">{t(lang, 'mfa.setup_intro')}</p>}
+    {!settingUp && <p class="auth-lead">{t(lang, 'mfa.verify_intro')}</p>}
+    {
+      enrolment && (
+        <>
+          <p>{t(lang, 'mfa.scan')}</p>
+          <img class="qr" src={enrolment.qrCode} alt={t(lang, 'mfa.qr_alt')} width="200" height="200" />
+          <p>
+            {t(lang, 'mfa.manual_key')} <code data-testid="totp-secret">{enrolment.secret}</code>
+          </p>
+        </>
+      )
+    }
+    {
+      showCodeForm ? (
+        <form method="post" class="stack">
+          <input type="hidden" name="action" value="verify" />
+          {settingUp && factorId === null && enrolment && <input type="hidden" name="factor_id" value={enrolment.factorId} />}
+          {settingUp && factorId !== null && <input type="hidden" name="factor_id" value={factorId} />}
+          <div>
+            <label for="code">{t(lang, 'mfa.code_label')}</label>
+            <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required />
+          </div>
+          <button class="button" type="submit">{t(lang, 'mfa.submit')}</button>
+        </form>
+      ) : (
+        <form method="post" class="stack">
+          <input type="hidden" name="action" value="enrol" />
+          <button class="button" type="submit">{t(lang, 'mfa.setup_start')}</button>
+        </form>
+      )
+    }
+  </div>
+</Base>
+
+<style>
+  .qr {
+    display: block;
+    background: #ffffff;
+    padding: var(--space-2);
+    border: 1px solid var(--color-border);
+  }
+
+  code {
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
+</style>

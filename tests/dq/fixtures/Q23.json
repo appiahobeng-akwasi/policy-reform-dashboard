@@ -1,0 +1,47 @@
+{
+  "rule": "Q23",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001"
+      }
+    ],
+    "context": {
+      "mode": "stored",
+      "stored": {
+        "milestone:MS-001": {
+          "status": "on_track",
+          "last_confirmed_at": "2026-11-10T09:00:00Z"
+        }
+      }
+    }
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001"
+      }
+    ],
+    "context": {
+      "mode": "stored",
+      "stored": {
+        "milestone:MS-001": {
+          "status": "on_track",
+          "last_confirmed_at": "2026-07-29T09:00:00Z"
+        }
+      }
+    },
+    "expect": {
+      "field": "last_update",
+      "value": "2026-07-29"
+    }
+  }
+}

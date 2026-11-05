@@ -1,0 +1,443 @@
+---
+// Executive view (spec 01 section 8): are we moving, and where is attention needed? Server-rendered,
+// no page JavaScript (docs/04 section 7), read through row-level security as the viewer. Charts
+// (docs/08 v0.2, decision 87): a hero ring of open items by state, per reform a stage track and a
+// split bar of ratings, programme milestones with due bars, and the quality trend with a gauge.
+import DueBar from '../components/DueBar.astro';
+import HeroLeaves from '../components/HeroLeaves.astro';
+import ObjectIcon from '../components/ObjectIcon.astro';
+import QualityTrend from '../components/QualityTrend.astro';
+import RagPill from '../components/RagPill.astro';
+import ReformChip from '../components/ReformChip.astro';
+import Ring from '../components/Ring.astro';
+import SplitBar from '../components/SplitBar.astro';
+import StageTrack from '../components/StageTrack.astro';
+import SampleBadge from '../components/SampleBadge.astro';
+import Base from '../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../i18n';
+import { asUser } from '../lib/server-db';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fexecutive', 303);
+
+type Reform = {
+  reform_id: string;
+  name_en: string;
+  name_fr: string | null;
+  stage_en: string | null;
+  stage_fr: string | null;
+  milestones_due_30d: number;
+  items_overdue: number;
+  items_stale: number;
+  items_red: number;
+  items_amber: number;
+  risks_high: number | null;
+  decisions_open: number | null;
+  rag: string;
+  has_sample: boolean;
+};
+const data = await asUser(user.claims, async (db) => {
+  const reforms = await db.query<Reform>(
+    `select s.reform_id, s.name_en, (select x.name_fr from reforms x where x.reform_id = s.reform_id) as name_fr, ps.label_en as stage_en, ps.label_fr as stage_fr,
+            s.milestones_due_30d::int, s.items_overdue::int, s.items_stale::int, s.items_red::int, s.items_amber::int,
+            s.risks_high::int, s.decisions_open::int, s.rag,
+            exists (select 1 from v_delivery_items i where i.reform_id = s.reform_id and i.is_sample) as has_sample
+       from v_reform_summary s left join pathway_stages ps on ps.code = s.current_stage
+      order by s.reform_id`,
+  );
+  const programme = await db.query<{ object_id: string; name: string; due_date: string | null; rag: string; days_overdue: number; days_to_due: number | null; is_stale: boolean; is_sample: boolean }>(
+    `select object_id, name, due_date, rag, days_overdue, days_to_due, is_stale, is_sample from v_delivery_flags
+      where object_type = 'milestone' and reform_id is null and status not in ('complete', 'cancelled')
+      order by due_date nulls last`,
+  );
+  const asOf = await db.query<{ as_of: string | null; stale: number }>(
+    `select max(last_confirmed_at)::text as as_of,
+            count(*) filter (where is_stale and status not in ('complete', 'cancelled'))::int as stale
+       from v_delivery_flags`,
+  );
+  const escalations = await db.query<{ level: number; object_type: string; object_id: string; reason: string }>(
+    'select level, object_type, object_id, reason from escalations where level >= 3 and resolved_at is null order by level desc, raised_at',
+  );
+  // Open items by state, each counted once (as on My items), and by rating per reform.
+  const states = await db.query<{ overdue: number; stale: number; total: number }>(
+    `select count(*) filter (where days_overdue > 0)::int as overdue,
+            count(*) filter (where days_overdue = 0 and is_stale)::int as stale,
+            count(*)::int as total
+       from v_delivery_flags where status not in ('complete', 'cancelled')`,
+  );
+  const ratings = await db.query<{ reform_id: string; rag: string; n: number }>(
+    `select reform_id, rag, count(*)::int as n from v_delivery_flags
+      where status not in ('complete', 'cancelled') and reform_id is not null group by reform_id, rag`,
+  );
+  const stages = await db.query<{ reform_id: string; stage: string; label_en: string; label_fr: string | null; status: string; entry_date: string | null }>(
+    `select s.reform_id, s.stage, ps.label_en, ps.label_fr, s.status, s.entry_date::text
+       from reform_stages s join pathway_stages ps on ps.code = s.stage order by s.reform_id, ps.sort_order`,
+  );
+  const trend = await db.query<{ month: string; average_score: string; runs: number }>("select to_char(month, 'YYYY-MM-DD') as month, average_score, runs from quality_trend()");
+  const labels = await db.query<{ code: string; label_en: string; label_fr: string }>("select code, label_en, label_fr from lookup_values where list_name = 'rag'");
+  return {
+    reforms: reforms.rows,
+    programme: programme.rows,
+    asOf: asOf.rows[0],
+    escalations: escalations.rows,
+    trend: trend.rows,
+    labels: labels.rows,
+    states: states.rows[0]!,
+    ratings: ratings.rows,
+    stages: stages.rows,
+  };
+});
+const ragLabel = (code: string) => {
+  const l = data.labels.find((x) => x.code === code);
+  return l ? (lang === 'fr' ? l.label_fr : l.label_en) : code;
+};
+// Escalations raised by the scheduled jobs carry a code (migration 0015); older ones, plain text.
+const reasonText = (reason: string) => {
+  try {
+    return t(lang, `views.reason_${reason}` as MessageKey);
+  } catch {
+    return reason;
+  }
+};
+const internal = data.reforms.some((r) => r.risks_high !== null);
+const DELIVERY = ['workstream', 'deliverable', 'activity', 'milestone'];
+const typeLabel = (type: string) => (DELIVERY.includes(type) ? t(lang, `items.type_${type}` as MessageKey) : type);
+const s = data.states;
+const ring = { overdue: s.overdue, stale: s.stale, ok: s.total - s.overdue - s.stale };
+const attention = ring.overdue + ring.stale;
+const worst = [...data.reforms].sort((a, b) => b.items_overdue - a.items_overdue)[0];
+const heroLead = worst && worst.items_overdue > 0 ? t(lang, 'views.hero_lead_reform', { reform: worst.reform_id, n: worst.items_overdue }) : t(lang, 'views.hero_lead_clear');
+const parts = [
+  { key: 'overdue', value: ring.overdue, colour: 'coral', label: t(lang, 'items.stat_overdue'), detail: t(lang, 'items.hero_overdue_detail') },
+  { key: 'stale', value: ring.stale, colour: 'sun', label: t(lang, 'items.stat_stale'), detail: t(lang, 'items.hero_stale_detail') },
+  { key: 'ok', value: ring.ok, colour: 'leaf', label: t(lang, 'views.hero_ok_label'), detail: t(lang, 'views.hero_ok_detail') },
+] as const;
+const RAGS = ['red', 'amber', 'green', 'blue', 'grey'] as const;
+const ratingParts = (reformId: string) => RAGS.map((rag) => ({ tone: rag, label: ragLabel(rag), value: data.ratings.find((r) => r.reform_id === reformId && r.rag === rag)?.n ?? 0 }));
+const stageState = (status: string) => (status === 'complete' ? 'done' : status === 'in_progress' || status === 'blocked' ? 'current' : 'todo');
+const trackFor = (reformId: string) =>
+  data.stages
+    .filter((st) => st.reform_id === reformId)
+    .map((st) => ({
+      code: st.stage,
+      label: (lang === 'fr' ? st.label_fr : null) ?? st.label_en,
+      state: stageState(st.status) as 'done' | 'current' | 'todo',
+      date: st.entry_date && stageState(st.status) === 'current' ? t(lang, 'views.stage_from', { entry: formatDate(st.entry_date, lang) }) : null,
+    }));
+const lastTrend = data.trend.at(-1);
+---
+
+<Base title={t(lang, 'views.executive_title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'views.executive_title')}</h1>
+    <p class="question">{t(lang, 'views.executive_question')}</p>
+  </div>
+  <div class="notice" data-testid="as-of" data-kind="delivery">
+    {data.asOf?.as_of && <p>{t(lang, 'views.data_as_of', { date: formatDate(data.asOf.as_of, lang) })}</p>}
+    <p>{t(lang, 'views.stale_count', { n: data.asOf?.stale ?? 0 })} {t(lang, 'views.stale_note')}</p>
+  </div>
+
+  {
+    s.total > 0 && (
+      <section class="hero" aria-labelledby="exec-hero-title" data-testid="exec-hero">
+        <HeroLeaves id="exec-leaves" />
+        <Ring
+          id="exec-ring"
+          size={168}
+          parts={parts.map((p) => ({ value: p.value, colour: p.colour }))}
+          label={t(lang, 'views.hero_ring_label', { overdue: ring.overdue, stale: ring.stale, ok: ring.ok, total: s.total })}
+        >
+          <span class="ring-number">{attention}</span>
+          <span class="ring-of">{t(lang, 'items.hero_ring_of', { total: s.total })}</span>
+        </Ring>
+        <div class="hero-text">
+          <h2 id="exec-hero-title">{t(lang, 'items.hero_title_reforms', { n: attention })}</h2>
+          <p class="hero-lead">{heroLead}</p>
+          <ul class="breakdown">
+            {parts.map((p) => (
+              <li data-part={p.key}>
+                <span class={`dot dot-${p.key}`} aria-hidden="true" />
+                <span class="part">{p.label}</span>
+                <span class="count">
+                  {p.value}/{s.total}
+                </span>
+                <span class="detail">{p.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    )
+  }
+
+  <div class="cards">
+    {
+      data.reforms.map((r) => {
+        const track = trackFor(r.reform_id);
+        return (
+          <article class="card reform-card" data-reform={r.reform_id}>
+            <header>
+              <ReformChip reformId={r.reform_id} label={r.reform_id} compact />
+              <h2>
+                {r.reform_id}: {lang === 'fr' && r.name_fr ? r.name_fr : r.name_en}
+              </h2>
+            </header>
+            <p class="pills">
+              <RagPill rag={r.rag} label={ragLabel(r.rag)} />
+              {r.has_sample && <SampleBadge />}
+            </p>
+            <p class:list={['big', { late: r.items_overdue > 0 }]}>
+              <span data-count="overdue">{r.items_overdue}</span> {t(lang, 'views.overdue_word')}
+            </p>
+            {track.length > 0 && <StageTrack stages={track} label={t(lang, 'views.stage_track_label', { reform: r.reform_id })} labels />}
+            {(r.stage_en || r.stage_fr) && track.length === 0 && <p class="meta">{t(lang, 'views.stage', { stage: (lang === 'fr' ? r.stage_fr : r.stage_en) ?? '' })}</p>}
+            <div class="ratings">
+              <p class="label">{t(lang, 'views.ratings')}</p>
+              <SplitBar parts={ratingParts(r.reform_id)} label={t(lang, 'views.ratings')} />
+            </div>
+            <dl class="counts">
+              <div>
+                <dt>{t(lang, 'views.due_30')}</dt>
+                <dd>{r.milestones_due_30d}</dd>
+              </div>
+              <div>
+                <dt>{t(lang, 'views.stale')}</dt>
+                <dd data-count="stale">{r.items_stale}</dd>
+              </div>
+              {r.risks_high !== null && (
+                <div>
+                  <dt>{t(lang, 'views.risks_high')}</dt>
+                  <dd>{r.risks_high}</dd>
+                </div>
+              )}
+              {r.decisions_open !== null && (
+                <div>
+                  <dt>{t(lang, 'views.decisions_open')}</dt>
+                  <dd>{r.decisions_open}</dd>
+                </div>
+              )}
+            </dl>
+            <p class="more">
+              <a href={`/pathway?reform=${r.reform_id}`}>{t(lang, 'views.open_pathway')}</a>
+            </p>
+          </article>
+        );
+      })
+    }
+  </div>
+  {!internal && <p class="meta">{t(lang, 'views.counterpart_note')}</p>}
+  <p class="meta">{t(lang, 'views.rag_legend')}</p>
+
+  <div class="lower">
+    <section class="card">
+      <h2>{t(lang, 'views.programme')}</h2>
+      {
+        data.programme.length === 0 ? (
+          <p>{t(lang, 'views.programme_none')}</p>
+        ) : (
+          <ul class="rows">
+            {data.programme.map((m) => (
+              <li>
+                <ObjectIcon kind="milestone" size="sm" />
+                <span class="row-main">
+                  <a href={`/items/milestone/${m.object_id}`}>{m.name}</a>
+                  {m.is_sample && <SampleBadge />}
+                  <DueBar daysOverdue={m.days_overdue} daysToDue={m.days_to_due} hasDueDate={m.due_date !== null} />
+                  <span class="meta">
+                    {m.due_date && t(lang, 'views.due', { date: formatDate(m.due_date, lang) })}
+                    {m.days_overdue > 0 && <> · {t(lang, 'items.overdue', { days: m.days_overdue })}</>}
+                  </span>
+                </span>
+                <RagPill rag={m.rag} label={ragLabel(m.rag)} />
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+
+    <section class="card">
+      <h2>{t(lang, 'views.trend')}</h2>
+      {
+        data.trend.length === 0 ? (
+          <p>{t(lang, 'views.trend_none')}</p>
+        ) : (
+          <div class="trend-wrap">
+            <div class="trend-gauge">
+              <Ring id="exec-gauge" size={112} gauge={{ value: lastTrend ? Number(lastTrend.average_score) : null, max: 100, colour: lastTrend && Number(lastTrend.average_score) >= 80 ? 'emerald' : 'coral' }} track="#eef1ec" label={t(lang, 'views.trend_gauge_label', { score: lastTrend ? Number(lastTrend.average_score) : 0 })}>
+                <span class="gauge-number">{lastTrend ? Number(lastTrend.average_score) : ''}</span>
+              </Ring>
+              <p class="meta">{t(lang, 'views.trend_latest')}</p>
+            </div>
+            <QualityTrend id="exec-trend" points={data.trend.map((p) => ({ month: p.month, score: Number(p.average_score), runs: p.runs }))} />
+          </div>
+        )
+      }
+    </section>
+  </div>
+
+  {
+    internal && (
+      <section class="card escalations">
+        <h2>{t(lang, 'views.escalations')}</h2>
+        {data.escalations.length === 0 ? (
+          <p>{t(lang, 'views.escalations_none')}</p>
+        ) : (
+          <ul class="rows">
+            {data.escalations.map((e) => (
+              <li>
+                <span class="pill pill-red">{t(lang, 'views.level', { n: e.level })}</span>
+                <span class="row-main">{t(lang, 'views.escalation_item', { level: e.level, item: `${typeLabel(e.object_type)} ${e.object_id}`, reason: reasonText(e.reason) })}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    )
+  }
+</Base>
+
+<style>
+  .question {
+    color: var(--color-text-muted);
+    font-size: var(--text-lg);
+  }
+  .notice {
+    margin-bottom: var(--space-6);
+  }
+  .notice p {
+    margin: 0;
+  }
+  .ring-number,
+  .gauge-number {
+    font-size: var(--text-hero);
+    font-weight: var(--weight-heavy);
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  .gauge-number {
+    font-size: var(--text-2xl);
+  }
+  .ring-of {
+    margin-top: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--color-forest-text);
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: var(--space-4);
+    margin: 0 0 var(--space-3);
+  }
+  .reform-card {
+    display: grid;
+    gap: var(--space-3);
+    align-content: start;
+  }
+  .reform-card header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .reform-card h2 {
+    font-size: var(--text-base);
+    margin: 0;
+  }
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+  }
+  .big {
+    margin: 0;
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-heavy);
+    letter-spacing: -0.02em;
+  }
+  .big.late {
+    color: var(--color-rag-red);
+  }
+  .label {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+  }
+  .counts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+  }
+  .counts dt {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .counts dd {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    font-variant-numeric: tabular-nums;
+  }
+  .more {
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  .meta {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .lower {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    gap: var(--space-4);
+    margin: var(--space-6) 0 var(--space-4);
+  }
+  .lower h2,
+  .escalations h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-lg);
+  }
+  .rows {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .rows li {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+  .row-main {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-1);
+  }
+  .trend-wrap {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-4);
+    align-items: center;
+  }
+  .trend-gauge {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+  }
+  .trend-gauge .meta {
+    margin: 0;
+    text-align: center;
+  }
+  @media (max-width: 767px) {
+    .lower {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .trend-wrap {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

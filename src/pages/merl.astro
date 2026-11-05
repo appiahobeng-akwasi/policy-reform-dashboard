@@ -1,0 +1,677 @@
+---
+// MERL view (spec 01 section 8, decision 90): what are we achieving and learning? Four tiles, then
+// one tab at a time: indicators by result level (Year 1 target, latest approved value with its
+// confidence and proxy flag, progress where it can be worked out), breakdowns by gender, province
+// and CSA adoption, and the learning log. The baseline, the life-of-programme target (only once
+// confirmed, CLAUDE.md), the history and trend, and a learning's full text open in the side panel.
+// Internal users only (spec 01 section 3).
+import DataAsOf from '../components/DataAsOf.astro';
+import EmptyState from '../components/EmptyState.astro';
+import LinkTabs from '../components/LinkTabs.astro';
+import ShowNumbers from '../components/ShowNumbers.astro';
+import SidePanel from '../components/SidePanel.astro';
+import Sparkline from '../components/Sparkline.astro';
+import StatCard from '../components/StatCard.astro';
+import Base from '../layouts/Base.astro';
+import { formatDate, formatNumber, t, type MessageKey } from '../i18n';
+import { progressToTarget } from '../lib/charts';
+import { asUser } from '../lib/server-db';
+import { dataAsOf, loadLabels } from '../lib/views';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fmerl', 303);
+const internal = user.role !== 'viewer_counterpart';
+const params = Astro.url.searchParams;
+const filter = {
+  reform: /^RA[0-9]$/.test(params.get('reform') ?? '') ? params.get('reform') : null,
+  level: ['output', 'outcome', 'process', 'readiness', 'uptake'].includes(params.get('level') ?? '') ? params.get('level') : null,
+};
+const TABS = ['indicators', 'breakdowns', 'learning'] as const;
+type Tab = (typeof TABS)[number];
+const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'indicators';
+const openCode = /^[A-Z]\d+(\.\d+)*$/.test(params.get('indicator') ?? '') ? params.get('indicator') : null;
+const openLearningId = /^[\w-]+$/.test(params.get('learning') ?? '') ? params.get('learning') : null;
+const link = (changes: Record<string, string | null>) => {
+  const p = new URLSearchParams(params);
+  if (!('indicator' in changes)) p.delete('indicator');
+  if (!('learning' in changes)) p.delete('learning');
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null) p.delete(k);
+    else p.set(k, v);
+  }
+  const query = p.toString();
+  return `/merl${query ? `?${query}` : ''}`;
+};
+
+type Indicator = {
+  indicator_code: string;
+  name_en: string;
+  name_fr: string | null;
+  result_level: string;
+  unit: string | null;
+  baseline: string | null;
+  target_y1: string | null;
+  target_y1_text: string | null;
+  target_lop: string | null;
+  target_lop_confirmed: boolean;
+  reforms: string[];
+  history: { periodEnd: string; value: number | null; confidence: string | null; isProxy: boolean; evidence: number }[];
+};
+type Fact = { metric: string; dimension_type: string; province: string | null; sex: string | null; value_low: string | null; value_high: string | null; unit: string | null; reference: string | null };
+type Learning = { learning_id: string; learning_date: string | null; theme: string; key_learning: string; implication: string | null; owner_text: string | null; next_action_date: string | null };
+
+const data = internal
+  ? await asUser(user.claims, async (db) => {
+      const reforms = await db.query<{ reform_id: string }>('select reform_id from reforms order by reform_id');
+      // Approved values only, programme totals (no reform), oldest first for the trend.
+      const indicators = await db.query<Indicator>(
+        `select i.indicator_code, i.name_en, i.name_fr, i.result_level, i.unit, i.baseline, i.target_y1, i.target_y1_text, i.target_lop, i.target_lop_confirmed,
+                coalesce((select array_agg(l.reform_id order by l.reform_id) from indicator_reform_links l where l.indicator_code = i.indicator_code), '{}') as reforms,
+                coalesce((select json_agg(json_build_object('periodEnd', v.period_end, 'value', v.value, 'confidence', v.confidence, 'isProxy', v.is_proxy,
+                                                            'evidence', (select count(*) from evidence_links e where e.object_type = 'indicator_value' and e.object_id = v.value_id::text))
+                                          order by v.period_end, v.created_at)
+                            from indicator_values v
+                           where v.indicator_code = i.indicator_code and v.approval_status = 'approved'
+                             and (v.reform_id is not distinct from $1::text)), '[]') as history
+           from indicators i
+          where i.is_active
+            and ($1::text is null or exists (select 1 from indicator_reform_links l where l.indicator_code = i.indicator_code and l.reform_id = $1))
+            and ($2::text is null or i.result_level = $2)
+          order by i.indicator_code`,
+        [filter.reform, filter.level],
+      );
+      const facts = await db.query<Fact>(
+        'select metric, dimension_type, province, sex, value_low, value_high, unit, reference from disaggregation_facts order by dimension_type, metric, province nulls first, sex',
+      );
+      const learning = await db.query<Learning>(
+        'select learning_id::text, learning_date, theme, key_learning, implication, owner_text, next_action_date from learning_log order by learning_date desc nulls last, theme',
+      );
+      return {
+        reforms: reforms.rows.map((r) => r.reform_id),
+        indicators: indicators.rows,
+        facts: facts.rows,
+        learning: learning.rows,
+        asOf: await dataAsOf(db, 'merl'),
+        label: await loadLabels(db, ['confidence'], lang),
+      };
+    })
+  : null;
+
+// A stored value as a number, or null when it is blank or text such as "TBC".
+const num = (v: string | number | null | undefined) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const show = (v: number | null, unit: string | null) => (v === null ? t(lang, 'reviews.none') : `${formatNumber(v, lang)}${unit === '%' ? '%' : ''}`);
+const tryT = (key: string, fallback: string) => {
+  try {
+    return t(lang, key as MessageKey);
+  } catch {
+    return fallback;
+  }
+};
+// Breakdowns grouped by what they break down (gender, CSA adoption ...), then by metric.
+const groups = [...new Set((data?.facts ?? []).map((f) => f.dimension_type))].map((dimension) => ({
+  dimension,
+  metrics: [...new Set(data!.facts.filter((f) => f.dimension_type === dimension).map((f) => f.metric))].map((metric) => ({
+    metric,
+    rows: data!.facts.filter((f) => f.dimension_type === dimension && f.metric === metric),
+  })),
+}));
+const isPercent = (unit: string | null) => unit !== null && unit.includes('%');
+const name = (i: Indicator) => (lang === 'fr' && i.name_fr ? i.name_fr : i.name_en);
+const latestOf = (i: Indicator) => i.history[i.history.length - 1];
+const progressOf = (i: Indicator) => {
+  const latest = latestOf(i);
+  // Year 1 only: life-of-programme targets are unconfirmed (CLAUDE.md).
+  return progressToTarget(num(i.baseline), num(i.target_y1), latest ? num(latest.value) : null);
+};
+const targetY1 = (i: Indicator) => (num(i.target_y1) !== null ? show(num(i.target_y1), i.unit) : (i.target_y1_text ?? null));
+const indicators = data?.indicators ?? [];
+// Decision 92: a value counts only when it is a number. An approved record of "TBC", "N/A" or
+// nothing is shown apart, so the tile does not overstate what can be measured.
+const withRecord = indicators.filter((i) => latestOf(i)).length;
+const withValue = indicators.filter((i) => num(latestOf(i)?.value) !== null).length;
+const withoutNumber = withRecord - withValue;
+const reached = indicators.filter((i) => (progressOf(i) ?? 0) >= 1).length;
+const levelsShown = [...new Set(indicators.map((i) => i.result_level))];
+const openIndicator = openCode ? (indicators.find((i) => i.indicator_code === openCode) ?? null) : null;
+const openLearning = openLearningId ? ((data?.learning ?? []).find((l) => l.learning_id === openLearningId) ?? null) : null;
+const label = (f: Fact) => [f.province, f.sex && f.sex !== 'all' ? tryT(`merl.sex_${f.sex}`, f.sex) : null].filter(Boolean).join(', ') || t(lang, 'merl.all');
+const range = (f: Fact) => {
+  const low = num(f.value_low);
+  const high = num(f.value_high);
+  if (low === null && high === null) return t(lang, 'reviews.none');
+  const pct = isPercent(f.unit) ? '%' : '';
+  return low !== null && high !== null && low !== high
+    ? t(lang, 'merl.range', { low: `${formatNumber(low, lang)}${pct}`, high: `${formatNumber(high, lang)}${pct}` })
+    : `${formatNumber((low ?? high)!, lang)}${pct}`;
+};
+---
+
+<Base title={t(lang, 'merl.title')}>
+  <div class="page-head">
+    <h1>{t(lang, 'merl.title')}</h1>
+    <p>{t(lang, 'merl.question')}</p>
+  </div>
+  {
+    !data ? (
+      <p class="notice">{t(lang, 'merl.not_allowed')}</p>
+    ) : (
+      <>
+        <DataAsOf value={data.asOf} />
+        <form method="get" class="filters">
+          <input type="hidden" name="tab" value={tab} />
+          <div>
+            <label for="reform">{t(lang, 'views.filter_reform')}</label>
+            <select id="reform" name="reform">
+              <option value="">{t(lang, 'merl.programme_totals')}</option>
+              {data.reforms.map((r) => <option value={r} selected={filter.reform === r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="level">{t(lang, 'merl.level')}</label>
+            <select id="level" name="level">
+              <option value="">{t(lang, 'views.all')}</option>
+              {['outcome', 'output'].map((l) => <option value={l} selected={filter.level === l}>{t(lang, `merl.level_${l}` as MessageKey)}</option>)}
+            </select>
+          </div>
+          <button class="btn btn-secondary" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+
+        <ul class="stats" aria-label={t(lang, 'merl.summary_label')}>
+          <StatCard label={t(lang, 'merl.indicators')} value={indicators.length} context={t(lang, filter.reform ? 'merl.for_reform' : 'merl.programme_totals', { reform: filter.reform ?? '' })} testId="tile-indicators" />
+          <StatCard
+            label={t(lang, 'merl.with_value')}
+            value={withValue}
+            context={withoutNumber > 0 ? t(lang, 'merl.without_number', { n: withoutNumber }) : undefined}
+            testId="tile-with-value"
+          />
+          <StatCard label={t(lang, 'merl.target_reached')} value={reached} context={t(lang, 'merl.target_reached_context')} testId="tile-reached" />
+          <StatCard label={t(lang, 'merl.waiting')} value={indicators.length - withValue} tone={indicators.length - withValue > 0 ? 'amber' : 'default'} testId="tile-waiting" />
+        </ul>
+
+        <LinkTabs
+          label={t(lang, 'merl.tabs_label')}
+          current={tab}
+          tabs={[
+            { key: 'indicators', label: t(lang, 'merl.indicators'), count: indicators.length, href: link({ tab: 'indicators' }) },
+            { key: 'breakdowns', label: t(lang, 'merl.breakdowns'), count: groups.length, href: link({ tab: 'breakdowns' }) },
+            { key: 'learning', label: t(lang, 'merl.learning'), count: data.learning.length, href: link({ tab: 'learning' }) },
+          ]}
+        />
+
+        {tab === 'indicators' && (
+          <section aria-label={t(lang, 'merl.indicators')} data-testid="indicators">
+            <p class="muted small-note">{t(lang, filter.reform ? 'merl.values_for_reform' : 'merl.values_programme', { reform: filter.reform ?? '' })}</p>
+            {indicators.length === 0 ? (
+              <EmptyState icon="merl" title={t(lang, 'merl.indicators_none_title')} message={t(lang, 'merl.indicators_none')} />
+            ) : (
+              levelsShown.map((level) => (
+                <div class="level-block">
+                  <h2 class="level-title">
+                    {t(lang, `merl.level_${level}` as MessageKey)} <span class="tab-pill">{indicators.filter((i) => i.result_level === level).length}</span>
+                  </h2>
+                  <div class="table-wrap">
+                    <table class="data-table quiet">
+                      <thead>
+                        <tr>
+                          <th scope="col" class="col-id">{t(lang, 'merl.col_code')}</th>
+                          <th scope="col">{t(lang, 'reviews.indicator')}</th>
+                          <th scope="col" class="col-num">{t(lang, 'reviews.target_y1')}</th>
+                          <th scope="col" class="col-latest">{t(lang, 'merl.latest')}</th>
+                          <th scope="col" class="col-progress">{t(lang, 'merl.col_progress')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {indicators
+                          .filter((i) => i.result_level === level)
+                          .map((i) => {
+                            const latest = latestOf(i);
+                            const progress = progressOf(i);
+                            const step = progress === null ? 0 : Math.round(Math.min(progress, 1) * 20) * 5;
+                            return (
+                              <tr data-indicator={i.indicator_code} aria-current={openCode === i.indicator_code ? 'true' : undefined}>
+                                <td class="col-id">{i.indicator_code}</td>
+                                <th scope="row" class="main-cell">
+                                  <a class="row-title" href={link({ indicator: i.indicator_code })}>{name(i)}</a>
+                                  <span class="row-sub">
+                                    {[i.reforms.join(', '), i.unit ? tryT(`merl.unit_${i.unit}`, i.unit) : null].filter(Boolean).join(' · ')}
+                                  </span>
+                                </th>
+                                <td class="col-num">{targetY1(i) ?? <span class="muted">{t(lang, 'merl.none_set')}</span>}</td>
+                                <td class="col-latest">
+                                  {latest ? (
+                                    <>
+                                      <strong>{show(num(latest.value), i.unit)}</strong>
+                                      <span class="row-sub">
+                                        {formatDate(latest.periodEnd.slice(0, 10), lang)} · {latest.confidence ? data.label('confidence', latest.confidence) : t(lang, 'merl.confidence_unrated')}
+                                        {latest.isProxy && (
+                                          <>
+                                            {' '}
+                                            <span class="badge">{t(lang, 'merl.proxy')}</span>
+                                          </>
+                                        )}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span class="muted">{t(lang, 'merl.no_value')}</span>
+                                  )}
+                                </td>
+                                <td class="col-progress">
+                                  {progress !== null ? (
+                                    <span class="progress" data-testid="progress">
+                                      <span class="progress-track" aria-hidden="true">
+                                        <span class={`progress-fill w-${step}`} />
+                                      </span>
+                                      <span class="progress-pct" aria-hidden="true">{Math.round(progress * 100)}%</span>
+                                      <span class="visually-hidden">{t(lang, 'merl.progress', { pct: Math.round(progress * 100) })}</span>
+                                    </span>
+                                  ) : (
+                                    <span class="muted">{num(i.target_y1) === null ? t(lang, 'merl.no_target_short') : t(lang, 'merl.no_progress')}</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
+          </section>
+        )}
+
+        {tab === 'breakdowns' && (
+          <section aria-label={t(lang, 'merl.breakdowns')}>
+            {groups.length === 0 ? (
+              <EmptyState icon="people" title={t(lang, 'merl.breakdowns_none_title')} message={t(lang, 'merl.breakdowns_none')} />
+            ) : (
+              <div class="breakdowns">
+                {groups.map((g) => (
+                  <section class="card dimension" data-dimension={g.dimension} aria-labelledby={`dim-${g.dimension}`}>
+                    <h2 id={`dim-${g.dimension}`}>{tryT(`merl.dimension_${g.dimension}`, g.dimension)}</h2>
+                    {g.metrics.map((m) => {
+                      const scale = m.rows.some((r) => isPercent(r.unit)) ? 100 : Math.max(1, ...m.rows.map((r) => num(r.value_high) ?? num(r.value_low) ?? 0));
+                      return (
+                        <div class="metric">
+                          <h3>{m.metric}</h3>
+                          <ul class="ranges">
+                            {m.rows.map((f) => {
+                              const low = num(f.value_low);
+                              const high = num(f.value_high) ?? low;
+                              const from = low === null ? 0 : (low / scale) * 100;
+                              const to = high === null ? from : (high / scale) * 100;
+                              return (
+                                <li>
+                                  <span class="range-label">{label(f)}</span>
+                                  {low !== null ? (
+                                    <svg viewBox="0 0 100 10" preserveAspectRatio="none" class="range" aria-hidden="true">
+                                      <rect x="0" y="3.5" width="100" height="3" rx="1.5" class="track" />
+                                      <rect x={Math.min(from, 98.5)} y="1" width={Math.max(1.5, to - from)} height="8" rx="2" class="fill" />
+                                    </svg>
+                                  ) : (
+                                    <span />
+                                  )}
+                                  <span class="range-value">{range(f)}</span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                    <ShowNumbers>
+                      <div class="table-wrap">
+                        <table class="data-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">{t(lang, 'merl.metric')}</th>
+                              <th scope="col">{t(lang, 'merl.where_who')}</th>
+                              <th scope="col">{t(lang, 'merl.value')}</th>
+                              <th scope="col">{t(lang, 'merl.source')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {g.metrics.flatMap((m) =>
+                              m.rows.map((f) => (
+                                <tr>
+                                  <td>{m.metric}</td>
+                                  <td>{label(f)}</td>
+                                  <td>{range(f)}</td>
+                                  <td class="muted">{f.reference}</td>
+                                </tr>
+                              )),
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </ShowNumbers>
+                  </section>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === 'learning' && (
+          <section aria-label={t(lang, 'merl.learning')}>
+            {data.learning.length === 0 ? (
+              <EmptyState icon="reviews" title={t(lang, 'merl.learning_none_title')} message={t(lang, 'merl.learning_none')} />
+            ) : (
+              <div class="table-wrap">
+                <table class="data-table quiet" data-testid="learning">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t(lang, 'merl.col_learning')}</th>
+                      <th scope="col" class="col-owner">{t(lang, 'reviews.owner')}</th>
+                      <th scope="col" class="col-date">{t(lang, 'merl.col_next')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.learning.map((l) => (
+                      <tr aria-current={openLearningId === l.learning_id ? 'true' : undefined}>
+                        <th scope="row" class="main-cell">
+                          <a class="row-title" href={link({ learning: l.learning_id })}>{l.theme}</a>
+                          <span class="row-sub clamp">{l.key_learning}</span>
+                        </th>
+                        <td class="col-owner">{l.owner_text ?? <span class="muted">{t(lang, 'dq.no_owner')}</span>}</td>
+                        <td class="col-date">{l.next_action_date ? formatDate(l.next_action_date, lang) : <span class="muted">{t(lang, 'merl.none_set')}</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {openCode && !openIndicator && (
+          <SidePanel title={openCode} closeHref={link({ indicator: null })}>
+            <p>{t(lang, 'merl.not_found')}</p>
+          </SidePanel>
+        )}
+        {openIndicator && (
+          <SidePanel title={openIndicator.indicator_code} closeHref={link({ indicator: null })}>
+            {(() => {
+              const latest = latestOf(openIndicator);
+              const progress = progressOf(openIndicator);
+              const points = openIndicator.history.filter((h) => h.value !== null).map((h) => ({ periodEnd: h.periodEnd, value: Number(h.value) }));
+              return (
+                <>
+                  <p class="panel-lead">{name(openIndicator)}</p>
+                  <dl class="panel-facts" data-testid="indicator-facts">
+                    <dt>{t(lang, 'merl.level')}</dt>
+                    <dd>{t(lang, `merl.level_${openIndicator.result_level}` as MessageKey)}</dd>
+                    <dt>{t(lang, 'merl.reforms')}</dt>
+                    <dd>{openIndicator.reforms.join(', ') || t(lang, 'reviews.programme_wide')}</dd>
+                    <dt>{t(lang, 'merl.baseline')}</dt>
+                    <dd>{openIndicator.baseline ?? <span class="muted">{t(lang, 'merl.none_set')}</span>}</dd>
+                    <dt>{t(lang, 'reviews.target_y1')}</dt>
+                    <dd>{targetY1(openIndicator) ?? <span class="muted">{t(lang, 'merl.none_set')}</span>}</dd>
+                    <dt>{t(lang, 'reviews.target_lop')}</dt>
+                    <dd data-testid="lop">
+                      {openIndicator.target_lop_confirmed && num(openIndicator.target_lop) !== null ? show(num(openIndicator.target_lop), openIndicator.unit) : t(lang, 'reviews.target_lop_unconfirmed')}
+                    </dd>
+                    <dt>{t(lang, 'merl.latest')}</dt>
+                    <dd>
+                      {latest ? (
+                        <>
+                          {show(num(latest.value), openIndicator.unit)} · {formatDate(latest.periodEnd.slice(0, 10), lang)}
+                          <span class="row-sub">
+                            {latest.confidence ? data.label('confidence', latest.confidence) : t(lang, 'merl.confidence_unrated')}
+                            {latest.isProxy && <> · {t(lang, 'merl.proxy')}</>} · {t(lang, 'merl.evidence', { n: latest.evidence })}
+                          </span>
+                        </>
+                      ) : (
+                        <span class="muted">{t(lang, 'merl.no_value')}</span>
+                      )}
+                    </dd>
+                    <dt>{t(lang, 'merl.col_progress')}</dt>
+                    <dd>{progress !== null ? t(lang, 'merl.progress', { pct: Math.round(progress * 100) }) : <span class="muted">{t(lang, 'merl.no_progress')}</span>}</dd>
+                    <dt>{t(lang, 'merl.trend')}</dt>
+                    <dd>
+                      {points.length > 1 ? (
+                        <Sparkline
+                          id={`spark-${openIndicator.indicator_code}`}
+                          values={points}
+                          label={t(lang, 'merl.trend_label', { values: points.map((p) => show(p.value, openIndicator.unit)).join(', ') })}
+                        />
+                      ) : (
+                        <span class="muted">{t(lang, 'merl.trend_needs_two')}</span>
+                      )}
+                    </dd>
+                  </dl>
+                </>
+              );
+            })()}
+          </SidePanel>
+        )}
+        {openLearningId && !openLearning && (
+          <SidePanel title={t(lang, 'merl.learning')} closeHref={link({ learning: null })}>
+            <p>{t(lang, 'merl.not_found')}</p>
+          </SidePanel>
+        )}
+        {openLearning && (
+          <SidePanel title={openLearning.theme} closeHref={link({ learning: null })}>
+            <p class="panel-lead">{openLearning.key_learning}</p>
+            <dl class="panel-facts" data-testid="learning-facts">
+              <dt>{t(lang, 'merl.fact_means')}</dt>
+              <dd>{openLearning.implication ?? <span class="muted">{t(lang, 'merl.none_set')}</span>}</dd>
+              <dt>{t(lang, 'merl.fact_date')}</dt>
+              <dd>{openLearning.learning_date ? formatDate(openLearning.learning_date, lang) : <span class="muted">{t(lang, 'merl.none_set')}</span>}</dd>
+              <dt>{t(lang, 'reviews.owner')}</dt>
+              <dd>{openLearning.owner_text ?? <span class="muted">{t(lang, 'dq.no_owner')}</span>}</dd>
+              <dt>{t(lang, 'merl.col_next')}</dt>
+              <dd>{openLearning.next_action_date ? formatDate(openLearning.next_action_date, lang) : <span class="muted">{t(lang, 'merl.none_set')}</span>}</dd>
+            </dl>
+          </SidePanel>
+        )}
+      </>
+    )
+  }
+</Base>
+
+<style>
+  .small-note {
+    margin: 0 0 var(--space-4);
+    font-size: var(--text-sm);
+  }
+  .level-block + .level-block {
+    margin-top: var(--space-6);
+  }
+  .level-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-base);
+  }
+  .quiet .col-id {
+    width: 4.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .quiet .col-num {
+    width: 7rem;
+  }
+  .quiet .col-latest {
+    width: 12rem;
+  }
+  .quiet .col-progress {
+    width: 10rem;
+  }
+  .quiet .col-owner {
+    width: 13rem;
+  }
+  .quiet .col-date {
+    width: 9rem;
+  }
+  .main-cell {
+    font-weight: var(--weight-normal);
+  }
+  .row-title {
+    display: block;
+    color: var(--color-text);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+  }
+  .row-title:hover,
+  .row-title:focus-visible {
+    text-decoration: underline;
+  }
+  .row-sub {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .clamp {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+  }
+  .quiet tr[aria-current='true'] {
+    background: var(--color-accent-soft);
+  }
+  .progress {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .progress-track {
+    position: relative;
+    display: block;
+    height: 0.4rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface-hover);
+    overflow: hidden;
+  }
+  .progress-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: var(--radius-round);
+    background: var(--gradient-emerald);
+  }
+  .progress-pct {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-bold);
+    font-variant-numeric: tabular-nums;
+  }
+  .breakdowns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .dimension h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-base);
+  }
+  .metric + .metric {
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+  }
+  .metric h3 {
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-bold);
+  }
+  .ranges {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ranges li {
+    display: grid;
+    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) minmax(0, 5.5rem);
+    gap: var(--space-3);
+    align-items: center;
+    font-size: var(--text-sm);
+  }
+  .range-label {
+    color: var(--color-text-muted);
+  }
+  .range-value {
+    font-weight: var(--weight-bold);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .range {
+    display: block;
+    width: 100%;
+    height: 0.625rem;
+  }
+  .range .track {
+    fill: var(--color-surface-hover);
+  }
+  .range .fill {
+    fill: #00a57a;
+  }
+  .panel-lead {
+    margin: 0 0 var(--space-4);
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    line-height: 1.4;
+  }
+  .panel-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-3) var(--space-4);
+    margin: 0;
+    font-size: var(--text-md);
+  }
+  .panel-facts dt {
+    color: var(--color-text-muted);
+  }
+  .panel-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 767px) {
+    .quiet .col-num,
+    .quiet .col-owner {
+      display: none;
+    }
+    /* Fixed columns so the table fits the screen: the indicator takes what is left. */
+    .quiet {
+      table-layout: fixed;
+      width: 100%;
+    }
+    .quiet .col-id {
+      width: 3.25rem;
+    }
+    .quiet .col-latest {
+      width: 6.25rem;
+    }
+    .quiet .col-progress {
+      width: 3.5rem;
+    }
+    .quiet th,
+    .quiet td {
+      overflow-wrap: anywhere;
+    }
+    .progress {
+      grid-template-columns: auto;
+    }
+    .progress-track {
+      display: none;
+    }
+    .ranges li {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .ranges .range {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+</style>

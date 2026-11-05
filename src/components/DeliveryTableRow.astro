@@ -1,0 +1,33 @@
+---
+// One row of the delivery table (decision 89). Shared by the rows shown and those behind
+// "Show more", so both read the same.
+import { formatDate, t, type MessageKey } from '../i18n';
+import RagPill from './RagPill.astro';
+import SampleBadge from './SampleBadge.astro';
+import type { DeliveryRow } from './DeliveryTable.astro';
+
+interface Props {
+  row: DeliveryRow;
+  ragLabel: (rag: string) => string;
+  showType: boolean;
+}
+const { row: x, ragLabel, showType } = Astro.props;
+const { lang } = Astro.locals;
+---
+
+<tr data-item={x.object_id}>
+  <td class="dt-id">{x.object_id}</td>
+  <td class="dt-name">
+    {showType && <span class="dt-type">{t(lang, `items.type_${x.object_type}` as MessageKey)}</span>}
+    <a href={`/items/${x.object_type}/${x.object_id}`}>{x.name}</a>
+    {x.is_sample && <SampleBadge />}
+  </td>
+  <td class:list={['dt-owner', { 'dt-none': !x.owner_name }]}>{x.owner_name ?? t(lang, 'views.no_owner')}</td>
+  <td class="dt-due">
+    {x.due_date ? formatDate(x.due_date, lang) : <span class="dt-none">{t(lang, 'views.pw_not_set')}</span>}
+    {x.days_overdue > 0 && <span class="dt-late">{t(lang, 'items.overdue', { days: x.days_overdue })}</span>}
+  </td>
+  <td class="dt-rating">
+    <RagPill rag={x.rag} label={ragLabel(x.rag)} />
+  </td>
+</tr>

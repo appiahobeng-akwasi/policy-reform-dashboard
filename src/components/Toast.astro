@@ -1,0 +1,40 @@
+---
+// A short confirmation after an action ("Update sent. Waiting for approval.", docs/08 section 4).
+// Shown by the server, so it works without JavaScript; the shared script fades it after a while.
+interface Props {
+  message: string;
+  testId?: string;
+}
+const { message, testId } = Astro.props;
+---
+
+<p class="toast" role="status" data-toast data-testid={testId}>{message}</p>
+
+<style>
+  .toast {
+    position: fixed;
+    z-index: 60;
+    right: var(--space-6);
+    bottom: var(--space-6);
+    max-width: min(24rem, calc(100vw - 2rem));
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-forest) var(--gradient-forest);
+    color: var(--color-primary-contrast);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-float);
+    font-size: var(--text-md);
+    transition: opacity var(--motion);
+  }
+  .toast:global(.toast-gone) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  @media (max-width: 767px) {
+    .toast {
+      left: var(--space-4);
+      right: var(--space-4);
+      bottom: calc(var(--tabbar-height) + var(--space-6));
+    }
+  }
+</style>

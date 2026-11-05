@@ -1,0 +1,402 @@
+---
+// Top bar of the main area (docs/08 v0.2 section 2): search (Ctrl or Cmd + K, or /), the language
+// switch, Notices, "New" (everything you can start, for your role), Help (shortcuts and how an
+// update is approved), and your initials for the account menu; then the page's primary action.
+// Menus are <details>, so they work without JavaScript. On phones a floating tab bar at the
+// bottom holds My items, Approvals (people who approve), Views, and Menu for the full sidebar.
+import templateUrl from '../../templates/Bulk_Upload_Template_v1.0.0.xlsx?url';
+import { t, type MessageKey } from '../i18n';
+import type { Access } from '../lib/shell';
+import Icon from './Icon.astro';
+import LanguageSwitch from './LanguageSwitch.astro';
+
+interface Props {
+  access: Access;
+  unread: number;
+  approvals: number;
+  action?: { href: string; label: string } | undefined;
+}
+const { access, unread, approvals, action } = Astro.props;
+const { lang, user } = Astro.locals;
+const path = Astro.url.pathname;
+const q = path === '/search' ? (Astro.url.searchParams.get('q') ?? '') : '';
+const VIEWS = ['/executive', '/portfolio', '/pathway', '/risks', '/merl', '/governance'];
+const on = (match: boolean) => (match ? 'page' : undefined);
+const initials = (user?.name ?? '')
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 2)
+  .map((w) => w[0]!.toUpperCase())
+  .join('');
+const roleLabel = (() => {
+  try {
+    return t(lang, `roles.${user?.role ?? ''}` as MessageKey);
+  } catch {
+    return user?.role ?? '';
+  }
+})();
+
+type Start = { href: string; icon: Parameters<typeof Icon>[0]['name']; title: MessageKey; text: MessageKey; download?: string };
+const starts: Start[] = [
+  ...(access.sends ? [{ href: '/my-items', icon: 'items', title: 'new.update_item', text: 'new.update_item_text' } as Start] : []),
+  ...(access.bulk
+    ? ([
+        { href: '/uploads/new', icon: 'upload', title: 'new.upload', text: 'new.upload_text' },
+        { href: templateUrl, icon: 'file', title: 'new.template', text: 'new.template_text', download: 'Bulk_Upload_Template_v1.0.0.xlsx' },
+      ] as Start[])
+    : []),
+  ...(access.admin
+    ? ([
+        { href: '/on-behalf', icon: 'someone', title: 'new.on_behalf', text: 'new.on_behalf_text' },
+        { href: '/reviews', icon: 'calendar', title: 'new.review_pack', text: 'new.review_pack_text' },
+      ] as Start[])
+    : []),
+];
+const howSteps: MessageKey[] = ['help.how_1', 'help.how_2', 'help.how_3', 'help.how_4'];
+const shortcuts: [string, MessageKey][] = [
+  [t(lang, 'search.shortcut'), 'help.key_search'],
+  ['/', 'help.key_search'],
+  ['J / K', 'help.key_next'],
+  [t(lang, 'help.key_enter_keys'), 'help.key_approve'],
+  ['Esc', 'help.key_close'],
+];
+---
+
+<header class="topbar">
+  <form class="search" method="get" action="/search" role="search">
+    <label for="site-search" class="visually-hidden">{t(lang, 'search.label')}</label>
+    <Icon name="search" />
+    <input id="site-search" name="q" type="search" value={q} placeholder={t(lang, 'search.placeholder')} accesskey="k" autocomplete="off" maxlength="100" />
+    <kbd class="shortcut" aria-hidden="true">{t(lang, 'search.shortcut')}</kbd>
+  </form>
+  <div class="tools">
+    <div class="lang-wide"><LanguageSwitch /></div>
+    <a class="icon-button notices" href="/notices" data-testid="nav-notices" aria-label={unread > 0 ? t(lang, 'nav.notices_unread', { n: unread }) : t(lang, 'nav.notices')} title={t(lang, 'nav.notices')}>
+      <Icon name="bell" />
+      {unread > 0 && <span class="count-pill" aria-hidden="true">{unread}</span>}
+    </a>
+    {
+      starts.length > 0 && (
+        <details class="menu" data-menu data-testid="new-menu">
+          <summary class="icon-button" aria-label={t(lang, 'new.label')} title={t(lang, 'new.label')}>
+            <Icon name="plus" />
+          </summary>
+          <div class="menu-panel wide">
+            <p class="menu-title">{t(lang, 'new.label')}</p>
+            {starts.map((s) => (
+              <a class="menu-row" href={s.href} download={s.download}>
+                <span class="menu-icon" aria-hidden="true">
+                  <Icon name={s.icon} />
+                </span>
+                <span>
+                  <span class="menu-row-title">{t(lang, s.title)}</span>
+                  <span class="menu-row-text">{t(lang, s.text)}</span>
+                </span>
+              </a>
+            ))}
+          </div>
+        </details>
+      )
+    }
+    <details class="menu" data-menu data-testid="help-menu">
+      <summary class="icon-button" aria-label={t(lang, 'help.label')} title={t(lang, 'help.label')}>
+        <Icon name="help" />
+      </summary>
+      <div class="menu-panel wide">
+        <p class="menu-title">{t(lang, 'help.how_title')}</p>
+        <ol class="how">{howSteps.map((k) => <li>{t(lang, k)}</li>)}</ol>
+        <p class="menu-title">{t(lang, 'help.keys_title')}</p>
+        <dl class="keys">
+          {
+            shortcuts.map(([key, text]) => (
+              <>
+                <dt>
+                  <kbd>{key}</kbd>
+                </dt>
+                <dd>{t(lang, text)}</dd>
+              </>
+            ))
+          }
+        </dl>
+        <a class="menu-row compact" href="/rules">
+          <span class="menu-icon" aria-hidden="true"><Icon name="rule" /></span>
+          <span class="menu-row-title">{t(lang, 'rules_ref.help_link')}</span>
+        </a>
+        <p class="menu-note">{t(lang, 'help.contact')}</p>
+      </div>
+    </details>
+    <details class="menu" data-menu data-testid="account-menu">
+      <summary class="avatar-button" aria-label={t(lang, 'account.menu_label', { name: user?.name ?? '' })} title={user?.name}>
+        {initials}
+      </summary>
+      <div class="menu-panel">
+        <p class="menu-who">
+          <strong>{user?.name}</strong>
+          <span>{roleLabel}</span>
+        </p>
+        <a class="menu-row compact" href="/account">
+          <span class="menu-icon" aria-hidden="true"><Icon name="account" /></span>
+          <span class="menu-row-title">{t(lang, 'nav.account')}</span>
+        </a>
+        {
+          access.sends && (
+            <a class="menu-row compact" href="/my-data-quality">
+              <span class="menu-icon" aria-hidden="true">
+                <Icon name="quality" />
+              </span>
+              <span class="menu-row-title">{t(lang, 'nav.my_data_quality')}</span>
+            </a>
+          )
+        }
+        <div class="lang-narrow"><LanguageSwitch /></div>
+        <form method="post" action="/auth/sign-out">
+          <button class="btn btn-ghost sign-out" type="submit">{t(lang, 'auth.sign_out')}</button>
+        </form>
+      </div>
+    </details>
+    {
+      action && (
+        <a class="btn primary-action" href={action.href} data-testid="primary-action">
+          {action.label}
+        </a>
+      )
+    }
+  </div>
+</header>
+
+<nav class="tabbar" aria-label={t(lang, 'nav.quick_label')}>
+  <a href="/my-items" aria-current={on(path === '/my-items')}>
+    <Icon name="items" />
+    <span>{t(lang, 'nav.my_items')}</span>
+  </a>
+  {
+    access.approver && (
+      <a href="/approvals" aria-current={on(path.startsWith('/approvals'))}>
+        <Icon name="approvals" />
+        <span>{t(lang, 'nav.approvals')}</span>
+        {approvals > 0 && <span class="tab-count">{approvals}</span>}
+      </a>
+    )
+  }
+  <a href="/executive" aria-current={on(VIEWS.some((v) => path.startsWith(v)))}>
+    <Icon name="executive" />
+    <span>{t(lang, 'nav.views_label')}</span>
+  </a>
+  <a href="#menu" aria-label={t(lang, 'nav.open_menu')}>
+    <Icon name="menu" />
+    <span aria-hidden="true">{t(lang, 'nav.menu')}</span>
+  </a>
+</nav>
+
+<style>
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 4rem;
+    padding: var(--space-3) var(--space-8);
+    background: rgb(242 244 240 / 85%);
+    backdrop-filter: blur(12px);
+  }
+  .search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    max-width: 32rem;
+    color: var(--color-text-muted);
+  }
+  .search :global(.icon) {
+    position: absolute;
+    left: var(--space-3);
+  }
+  .search input {
+    padding-left: 2.25rem;
+    padding-right: 3.5rem;
+    border-color: transparent;
+    box-shadow: var(--shadow-card);
+  }
+  .shortcut {
+    position: absolute;
+    right: var(--space-2);
+    padding: 0 var(--space-1);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-surface);
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+  }
+  .icon-button,
+  .avatar-button {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: var(--control-height);
+    height: var(--control-height);
+    border-radius: 50%;
+    color: var(--color-text);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+    cursor: pointer;
+    list-style: none;
+  }
+  .icon-button:hover {
+    background: var(--color-surface-hover);
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .avatar-button {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-bold);
+    color: #ffffff;
+    background: var(--color-forest) var(--gradient-forest);
+  }
+  .count-pill,
+  .tab-count {
+    position: absolute;
+    min-width: 1.125rem;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-round);
+    background: var(--color-danger) var(--gradient-danger);
+    color: #ffffff;
+    font-size: 0.6875rem;
+    font-weight: var(--weight-bold);
+    line-height: 1.125rem;
+    text-align: center;
+  }
+  .count-pill {
+    top: -0.25rem;
+    right: -0.25rem;
+  }
+  .menu-who {
+    display: grid;
+    margin: var(--space-2) var(--space-2) var(--space-3);
+    font-size: var(--text-md);
+  }
+  .menu-who span {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .how {
+    margin: 0 0 var(--space-2);
+    padding: 0 var(--space-2) 0 var(--space-6);
+    font-size: var(--text-sm);
+  }
+  .how li + li {
+    margin-top: var(--space-1);
+  }
+  .keys {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-1) var(--space-3);
+    margin: 0 var(--space-2) var(--space-2);
+    font-size: var(--text-sm);
+  }
+  .keys dd {
+    margin: 0;
+    color: var(--color-text-muted);
+  }
+  .keys kbd {
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    padding: 0 var(--space-1);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+  }
+  .menu-note {
+    margin: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .sign-out {
+    width: 100%;
+    justify-content: flex-start;
+    color: var(--color-text-muted);
+  }
+  .lang-narrow {
+    display: none;
+  }
+  .primary-action {
+    box-shadow: 0 6px 18px rgb(0 85 61 / 22%);
+  }
+  .tabbar {
+    display: none;
+  }
+
+  @media (max-width: 767px) {
+    .topbar {
+      padding: var(--space-2) var(--space-4);
+      gap: var(--space-2);
+    }
+    .search {
+      max-width: none;
+    }
+    .shortcut,
+    .primary-action,
+    .lang-wide,
+    [data-testid='help-menu'] {
+      display: none;
+    }
+    .lang-narrow {
+      display: block;
+      margin: var(--space-2);
+    }
+    .menu-panel.wide {
+      position: fixed;
+      left: var(--space-4);
+      right: var(--space-4);
+      top: 4rem;
+      width: auto;
+    }
+
+    /* The floating tab bar; the page leaves room for it (Base.astro). */
+    .tabbar {
+      position: fixed;
+      z-index: 25;
+      left: 50%;
+      bottom: max(var(--space-4), env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      display: flex;
+      gap: 2px;
+      max-width: calc(100vw - 2rem);
+      padding: 0.375rem;
+      border-radius: var(--radius-round);
+      background: rgb(255 255 255 / 92%);
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-float);
+    }
+    .tabbar a {
+      position: relative;
+      display: grid;
+      justify-items: center;
+      gap: 2px;
+      min-width: 3.5rem;
+      padding: 0.375rem var(--space-3);
+      border-radius: var(--radius-round);
+      color: var(--color-text);
+      font-size: 0.6875rem;
+      font-weight: var(--weight-bold);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .tabbar a[aria-current='page'] {
+      background: var(--color-accent-soft) var(--gradient-accent-soft);
+      color: var(--color-accent);
+    }
+    .tab-count {
+      top: 0.125rem;
+      right: 0.375rem;
+    }
+  }
+</style>

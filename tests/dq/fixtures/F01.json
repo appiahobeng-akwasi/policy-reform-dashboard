@@ -1,0 +1,15 @@
+{
+  "rule": "F01",
+  "pass": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {}
+  },
+  "fail": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {
+      "fileName": "upload.xlsm"
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "rule": "Q09",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001",
+        "depends_on": [
+          "MS-002"
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001",
+        "depends_on": [
+          "MS-002"
+        ]
+      }
+    ],
+    "context": {
+      "dependencies": [
+        [
+          "milestone:MS-002",
+          "milestone:MS-001"
+        ]
+      ]
+    },
+    "expect": {
+      "field": "depends_on"
+    }
+  }
+}

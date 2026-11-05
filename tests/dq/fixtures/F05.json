@@ -1,0 +1,29 @@
+{
+  "rule": "F05",
+  "pass": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {}
+  },
+  "fail": {
+    "route": "bulk_upload",
+    "rows": [],
+    "workbook": {
+      "sheets": [
+        {
+          "name": "Milestones",
+          "headers": [
+            "milestone_id",
+            "name",
+            "owner"
+          ],
+          "dataRows": 3,
+          "formulaCells": []
+        }
+      ]
+    },
+    "expect": {
+      "sheet": "Milestones"
+    }
+  }
+}

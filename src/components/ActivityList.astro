@@ -1,0 +1,84 @@
+---
+// An item's activity as a short timeline (decision 81): who sent an update and when, and who
+// approved or returned it, with the approver's note. Newest first.
+import { formatDateTime, t, type MessageKey } from '../i18n';
+import type { ActivityEvent } from '../lib/items';
+import ObjectIcon from './ObjectIcon.astro';
+
+interface Props {
+  events: ActivityEvent[];
+}
+const { events } = Astro.props;
+const { lang } = Astro.locals;
+const KIND = { sent: 'upload', approved: 'confirmation', returned: 'returned' } as const;
+const say = (e: ActivityEvent) => {
+  const name = e.actor ?? t(lang, 'activity.someone');
+  if (e.event === 'sent') return e.forPerson ? t(lang, 'activity.sent_for', { name, for: e.forPerson }) : t(lang, 'activity.sent', { name });
+  return t(lang, e.event === 'approved' ? 'activity.approved' : 'activity.returned', { name });
+};
+---
+
+{
+  events.length === 0 ? (
+    <p class="muted" data-testid="activity-none">{t(lang, 'activity.none')}</p>
+  ) : (
+    <ol class="activity" data-testid="activity">
+      {events.map((e) => (
+        <li data-event={e.event}>
+          <ObjectIcon kind={KIND[e.event]} size="sm" />
+          <div>
+            <p class="what">{say(e)}</p>
+            <p class="when">
+              {formatDateTime(e.at, lang)}
+              {e.event === 'sent' && <> · {t(lang, `approvals.route_${e.route}` as MessageKey)}</>}
+            </p>
+            {e.note && <p class="note">{e.note}</p>}
+          </div>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+<style>
+  .activity {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-3);
+  }
+  li {
+    position: relative;
+    display: flex;
+    gap: var(--space-3);
+  }
+  /* A thin line joins the steps. */
+  li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 0.875rem;
+    top: 2rem;
+    bottom: calc(-1 * var(--space-3));
+    width: 2px;
+    background: var(--color-border);
+  }
+  p {
+    margin: 0;
+  }
+  .what {
+    font-size: var(--text-md);
+    font-weight: var(--weight-bold);
+  }
+  .when {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .note {
+    margin-top: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-hover);
+    font-size: var(--text-sm);
+  }
+</style>

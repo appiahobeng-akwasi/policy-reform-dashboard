@@ -1,0 +1,129 @@
+---
+// Users and access (spec 01 section 3, build step 11): everyone who may sign in, with their role,
+// reforms and whether they have set up an authenticator app. Admins only.
+import Base from '../../../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../../../i18n';
+import { createAuthAdmin } from '../../../lib/auth';
+import { ADMIN_ROLES, listUsers, PAGE_SIZE, ROLES, type UserFilter } from '../../../lib/admin/users';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fadmin%2Fusers', 303);
+const allowed = ADMIN_ROLES.includes(user.role);
+
+const params = Astro.url.searchParams;
+const status = params.get('status');
+const role = params.get('role');
+const filter: UserFilter = {
+  q: (params.get('q') ?? '').trim().slice(0, 100),
+  role: role && (ROLES as readonly string[]).includes(role) ? role : null,
+  status: status === 'inactive' || status === 'all' ? status : 'active',
+  page: Math.max(1, Number.parseInt(params.get('page') ?? '1', 10) || 1),
+};
+const result = allowed ? await listUsers(user.claims, filter) : null;
+const pages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
+// Who has an authenticator app comes from the sign-in provider; unknown if it is not configured.
+const authAdmin = createAuthAdmin();
+// Only administrators must have one (spec 01 section 3), so only they are checked.
+const mustHaveApp = (result?.rows ?? []).filter((u) => ADMIN_ROLES.includes(u.role) && u.authUserId).map((u) => u.authUserId!);
+const withApp = authAdmin && mustHaveApp.length > 0 ? await authAdmin.withAuthenticator(mustHaveApp).catch(() => null) : null;
+const pageLink = (n: number) => {
+  const p = new URLSearchParams(params);
+  p.set('page', String(n));
+  return `?${p.toString()}`;
+};
+---
+
+<Base title={t(lang, 'admin.users_title')}>
+  <h1>{t(lang, 'admin.users_title')}</h1>
+  {
+    !result ? (
+      <p class="notice">{t(lang, 'admin.not_allowed')}</p>
+    ) : (
+      <>
+        <p>
+          <a class="button" href="/admin/users/new">{t(lang, 'admin.add_user')}</a> <a href="/admin/people">{t(lang, 'admin.people_link')}</a>
+        </p>
+        <form method="get" class="filters">
+          <div>
+            <label for="q">{t(lang, 'admin.search')}</label>
+            <input id="q" name="q" type="search" value={filter.q} />
+          </div>
+          <div>
+            <label for="role">{t(lang, 'admin.role')}</label>
+            <select id="role" name="role">
+              <option value="">{t(lang, 'views.all')}</option>
+              {ROLES.map((r) => <option value={r} selected={filter.role === r}>{t(lang, `roles.${r}` as MessageKey)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label for="status">{t(lang, 'admin.status')}</label>
+            <select id="status" name="status">
+              <option value="active" selected={filter.status === 'active'}>{t(lang, 'admin.status_active')}</option>
+              <option value="inactive" selected={filter.status === 'inactive'}>{t(lang, 'admin.status_inactive')}</option>
+              <option value="all" selected={filter.status === 'all'}>{t(lang, 'views.all')}</option>
+            </select>
+          </div>
+          <button class="button" type="submit">{t(lang, 'views.apply')}</button>
+        </form>
+        <p class="muted">{t(lang, 'admin.count', { n: result.total })}</p>
+        {result.rows.length === 0 ? (
+          <p>{t(lang, 'admin.none_found')}</p>
+        ) : (
+          <div class="table-wrap">
+            <table class="data-table" data-testid="users">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'admin.name')}</th>
+                  <th scope="col">{t(lang, 'admin.role')}</th>
+                  <th scope="col">{t(lang, 'admin.reforms')}</th>
+                  <th scope="col">{t(lang, 'admin.authenticator')}</th>
+                  <th scope="col">{t(lang, 'admin.last_sign_in')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.rows.map((u) => (
+                  <tr data-email={u.email}>
+                    <th scope="row">
+                      <a href={`/admin/users/${u.userId}`}>{u.name}</a>
+                      <br />
+                      <span class="muted">{u.email}</span>
+                      {!u.isActive && (
+                        <>
+                          {' '}
+                          <span class="badge">{t(lang, 'admin.status_inactive')}</span>
+                        </>
+                      )}
+                    </th>
+                    <td>{t(lang, `roles.${u.role}` as MessageKey)}</td>
+                    <td>
+                      {u.scope.length === 0
+                        ? t(lang, ADMIN_ROLES.includes(u.role) ? 'admin.all_reforms' : 'dq.none')
+                        : u.scope.map((s) => (s.canApprove ? t(lang, 'admin.scope_approves', { reform: s.reformId }) : s.reformId)).join(', ')}
+                    </td>
+                    <td>
+                      {!ADMIN_ROLES.includes(u.role)
+                        ? t(lang, 'admin.authenticator_not_needed')
+                        : withApp === null || !u.authUserId
+                          ? t(lang, 'admin.authenticator_unknown')
+                          : withApp.has(u.authUserId)
+                          ? t(lang, 'admin.authenticator_yes')
+                          : t(lang, 'admin.authenticator_no')}
+                    </td>
+                    <td>{u.lastSignInAt ? formatDate(u.lastSignInAt, lang) : t(lang, 'admin.never')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {pages > 1 && (
+          <nav class="pager">
+            {filter.page > 1 && <a href={pageLink(filter.page - 1)}>{t(lang, 'items.previous')}</a>}
+            <span>{t(lang, 'items.page', { n: filter.page })}</span>
+            {filter.page < pages && <a href={pageLink(filter.page + 1)}>{t(lang, 'items.next')}</a>}
+          </nav>
+        )}
+      </>
+    )
+  }
+</Base>

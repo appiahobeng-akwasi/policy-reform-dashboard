@@ -1,0 +1,24 @@
+---
+// A delivery, stage or validation status as a soft pill with its name (docs/08 section 4).
+interface Props {
+  status: string;
+  label: string;
+}
+const { status, label } = Astro.props;
+const TONES: Record<string, string> = {
+  complete: 'blue',
+  validated: 'blue',
+  on_track: 'green',
+  in_progress: 'green',
+  at_risk: 'amber',
+  delayed: 'amber',
+  pending: 'grey',
+  proposed: 'accent',
+  blocked: 'red',
+  rejected: 'red',
+  cancelled: 'grey',
+  not_started: 'grey',
+};
+---
+
+<span class={`pill pill-${TONES[status] ?? 'grey'}`} data-status={status}>{label}</span>

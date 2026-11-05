@@ -1,0 +1,134 @@
+---
+// The left side of the approvals inbox (docs/08 v0.2, decision 79): updates waiting for you,
+// grouped by the person who sent them, oldest first. Each row names the item, its reform and how
+// long it has waited; the open one is marked.
+import { t, type MessageKey } from '../i18n';
+import type { QueueItem } from '../lib/approvals';
+import { reformTheme } from '../lib/charts';
+import ObjectIcon from './ObjectIcon.astro';
+
+interface Props {
+  queue: QueueItem[];
+  selected?: string | undefined;
+  /** Keep the filter in each row's address. */
+  query?: string;
+}
+const { queue, selected, query = '' } = Astro.props;
+const { lang } = Astro.locals;
+const days = (iso: string) => Math.floor((Date.now() - Date.parse(iso.replace(' ', 'T'))) / 86_400_000);
+// A bulk upload is named by its file; anything else by its item (an update card may also carry evidence rows).
+const titleOf = (q: QueueItem) =>
+  q.route === 'bulk_upload' || !q.first ? (q.fileName ?? t(lang, 'approvals.rows', { n: q.rowCount })) : `${q.first.id}${q.first.name ? `: ${q.first.name}` : ''}`;
+const groups = [...new Set(queue.map((q) => q.submittedBy))].map((name) => ({ name, items: queue.filter((q) => q.submittedBy === name) }));
+---
+
+<nav class="approval-list" aria-label={t(lang, 'approvals.list_label')} data-testid="approval-list">
+  {
+    groups.map((g) => (
+      <section class="group">
+        <h2 class="group-name">
+          {g.name}
+          <span class="tab-pill">{g.items.length}</span>
+        </h2>
+        <ul>
+          {g.items.map((q) => {
+            const waited = days(q.createdAt);
+            const reform = q.reformIds[0] ?? null;
+            return (
+              <li data-submission={q.submissionId} aria-current={q.submissionId === selected ? 'true' : undefined}>
+                <a href={`/approvals/${q.submissionId}${query}`}>
+                  <ObjectIcon kind={q.isConfirmation ? 'confirmation' : q.route === 'bulk_upload' ? 'upload' : (q.first?.type ?? 'milestone')} size="sm" />
+                  <span class="text">
+                    <span class="title">{titleOf(q)}</span>
+                    <span class="meta">
+                      <span class={`reform-text-${reformTheme(reform).key}`}>{q.reformIds.length > 0 ? q.reformIds.join(', ') : t(lang, 'items.programme_wide')}</span>
+                      {' · '}
+                      {q.isConfirmation ? t(lang, 'approvals.kind_confirmation') : t(lang, `approvals.route_${q.route}` as MessageKey)}
+                      {q.onBehalfOf && <> · {t(lang, 'approvals.entered_for', { name: q.onBehalfOf })}</>}
+                    </span>
+                  </span>
+                  <span class:list={['waited', { old: waited >= 7 }]}>{waited > 0 ? t(lang, 'approvals.days_short', { days: waited }) : t(lang, 'approvals.today_short')}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    ))
+  }
+</nav>
+
+<style>
+  .approval-list {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+  .group-name {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 0 var(--space-1);
+    padding: 0 var(--space-2);
+    font-size: var(--text-md);
+  }
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 2px;
+  }
+  a {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  a:hover {
+    background: rgb(255 255 255 / 70%);
+  }
+  li[aria-current='true'] a {
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .text {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+  }
+  .title {
+    font-size: var(--text-md);
+    font-weight: var(--weight-bold);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .meta {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .meta span {
+    font-weight: var(--weight-bold);
+  }
+  .reform-text-ra1 { color: var(--color-ra1); }
+  .reform-text-ra2 { color: var(--color-ra2); }
+  .reform-text-ra3 { color: var(--color-ra3); }
+  .reform-text-programme { color: var(--color-programme); }
+  .waited {
+    flex: none;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .waited.old {
+    color: var(--color-rag-red);
+    font-weight: var(--weight-bold);
+  }
+</style>

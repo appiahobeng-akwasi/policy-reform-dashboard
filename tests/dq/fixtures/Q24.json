@@ -1,0 +1,41 @@
+{
+  "rule": "Q24",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "indicator",
+        "op": "update",
+        "id": "P1.4",
+        "fields": {
+          "name_en": "Percentage of reforms on track",
+          "unit": "%"
+        }
+      }
+    ],
+    "context": {
+      "mode": "stored"
+    }
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "indicator",
+        "op": "update",
+        "id": "P1.4",
+        "fields": {
+          "name_en": "Percentage of reforms on track",
+          "unit": "number"
+        }
+      }
+    ],
+    "context": {
+      "mode": "stored"
+    },
+    "expect": {
+      "field": "unit",
+      "value": "P1.4"
+    }
+  }
+}

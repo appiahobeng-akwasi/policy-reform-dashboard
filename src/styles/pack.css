@@ -1,0 +1,14 @@
+/* Review pack styles (decision 53): bundled on the pack page, inlined in the printable and
+   downloadable file. Prints on A4. */
+.pack{font-family:Arial,sans-serif;line-height:1.45;color:#1a1a1a}
+.pack h2{font-size:1.2rem;margin:1.6rem 0 .4rem;border-bottom:2px solid #1a1a1a;padding-bottom:.2rem}
+.pack h3{font-size:1rem;margin:1.1rem 0 .3rem}
+.pack table{border-collapse:collapse;width:100%;font-size:.85rem;margin:.3rem 0 .8rem}
+.pack th,.pack td{text-align:left;vertical-align:top;padding:.3rem .45rem;border:1px solid #c8c8c8}
+.pack th{background:#f1f1f1}.pack .number{text-align:right}
+.pack .muted,.pack .meta{color:#555;font-size:.85rem}
+.pack .notice{background:#fff8e1;border:1px solid #e6c65c;padding:.4rem .6rem}
+.pack .badge{display:inline-block;padding:0 .3rem;font-size:.7rem;font-weight:bold;text-transform:uppercase;border:1px solid #999;border-radius:3px}
+.pack .badge.red{border-color:#b3261e;color:#b3261e}
+@page{size:A4;margin:15mm}
+@media print{.pack h2{break-after:avoid}.pack tr{break-inside:avoid}}

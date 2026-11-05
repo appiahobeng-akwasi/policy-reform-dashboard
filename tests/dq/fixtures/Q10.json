@@ -1,0 +1,57 @@
+{
+  "rule": "Q10",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "risk",
+        "op": "create",
+        "fields": {
+          "category": "political",
+          "description": "Minister changes before the decree is signed",
+          "likelihood": 3,
+          "impact": 4,
+          "mitigation": "Brief the deputy minister as well",
+          "trigger": "Cabinet reshuffle announced",
+          "owner_person_id": "11111111-1111-4111-8111-111111111111",
+          "review_date": "2026-12-01",
+          "status": "open"
+        },
+        "links": [
+          {
+            "object_type": "reform",
+            "object_id": "RA1"
+          }
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "risk",
+        "op": "create",
+        "fields": {
+          "category": "political",
+          "description": "Minister changes before the decree is signed",
+          "likelihood": 3,
+          "impact": 4,
+          "mitigation": "Brief the deputy minister as well",
+          "owner_person_id": "11111111-1111-4111-8111-111111111111",
+          "review_date": "2026-12-01",
+          "status": "open"
+        },
+        "links": [
+          {
+            "object_type": "reform",
+            "object_id": "RA1"
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "field": "trigger"
+    }
+  }
+}

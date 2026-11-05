@@ -1,0 +1,43 @@
+{
+  "rule": "B02",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001"
+      },
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-002"
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {},
+        "id": "MS-001"
+      },
+      {
+        "entity": "milestone",
+        "op": "update",
+        "fields": {
+          "next_action": "Second copy of the same row"
+        },
+        "id": "MS-001"
+      }
+    ],
+    "expect": {
+      "field": "milestone_id",
+      "value": "MS-001"
+    }
+  }
+}

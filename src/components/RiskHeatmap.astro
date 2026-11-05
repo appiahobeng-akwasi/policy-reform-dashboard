@@ -1,0 +1,127 @@
+---
+// A 5 x 5 risk heatmap as hand-drawn SVG (docs/08: no charting library): likelihood up, impact
+// across, the number of risks in each cell, each cell a link to the risks in it. The same numbers
+// are in a table for screen readers.
+import { t } from '../i18n';
+
+interface Props {
+  /** counts[likelihood - 1][impact - 1] */
+  counts: number[][];
+  title: string;
+  /** Link for a cell, given likelihood and impact. */
+  href: (likelihood: number, impact: number) => string;
+  testId: string;
+}
+const { counts, title, href, testId } = Astro.props;
+const { lang } = Astro.locals;
+const CELL = 44;
+const LEFT = 26;
+const TOP = 6;
+const levels = [1, 2, 3, 4, 5];
+// Score bands: 15 and over is high (as on the Executive view), 8 to 14 medium, under 8 low.
+const band = (l: number, i: number) => (l * i >= 15 ? 'high' : l * i >= 8 ? 'medium' : 'low');
+---
+
+<figure class="heatmap card" data-testid={testId}>
+  <figcaption>{title}</figcaption>
+  <svg viewBox={`0 0 ${LEFT + CELL * 5 + 4} ${TOP + CELL * 5 + 34}`} width="100%" role="img" aria-label={title}>
+    <defs>
+      {
+        (['high', 'medium', 'low'] as const).flatMap((b) =>
+          (['on', 'off'] as const).map((state) => (
+            <linearGradient id={`${testId}-${b}-${state}`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" class={`stop-${b}-${state}-a`} />
+              <stop offset="1" class={`stop-${b}-${state}-b`} />
+            </linearGradient>
+          )),
+        )
+      }
+    </defs>
+    {
+      levels.map((l) =>
+        levels.map((i) => {
+          const n = counts[l - 1]?.[i - 1] ?? 0;
+          const x = LEFT + (i - 1) * CELL;
+          const y = TOP + (5 - l) * CELL;
+          return (
+            <a href={href(l, i)} aria-label={t(lang, 'risks.cell_label', { n, likelihood: l, impact: i })}>
+              <rect x={x} y={y} width={CELL - 3} height={CELL - 3} rx="8" class="cell" fill={`url(#${testId}-${band(l, i)}-${n > 0 ? 'on' : 'off'})`} />
+              {n > 0 && (
+                <text x={x + CELL / 2 - 1} y={y + CELL / 2 + 4} text-anchor="middle" class="count">
+                  {n}
+                </text>
+              )}
+            </a>
+          );
+        }),
+      )
+    }
+    {levels.map((l) => <text x={LEFT - 6} y={TOP + (5 - l) * CELL + CELL / 2 + 3} text-anchor="end" class="axis">{l}</text>)}
+    {levels.map((i) => <text x={LEFT + (i - 1) * CELL + CELL / 2 - 1} y={TOP + CELL * 5 + 12} text-anchor="middle" class="axis">{i}</text>)}
+    <text x={LEFT + (CELL * 5) / 2} y={TOP + CELL * 5 + 28} text-anchor="middle" class="axis">{t(lang, 'risks.impact')}</text>
+  </svg>
+  <p class="axis-note">{t(lang, 'risks.likelihood_up')}</p>
+  <div class="visually-hidden">
+    <table>
+      <caption>{title}</caption>
+      <thead>
+        <tr>
+          <th scope="col">{t(lang, 'risks.likelihood')}</th>
+          {levels.map((i) => <th scope="col">{t(lang, 'risks.impact')} {i}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {
+          [...levels].reverse().map((l) => (
+            <tr>
+              <th scope="row">{l}</th>
+              {levels.map((i) => (
+                <td>{counts[l - 1]?.[i - 1] ?? 0}</td>
+              ))}
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+</figure>
+
+<style>
+  .heatmap {
+    margin: 0;
+  }
+  figcaption {
+    font-weight: var(--weight-bold);
+    margin-bottom: var(--space-1);
+  }
+  .cell {
+    stroke: none;
+  }
+  /* Band colours from tokens (tokens.css): soft when empty, stronger where there are risks. */
+  .stop-high-on-a { stop-color: var(--color-heat-high-a); }
+  .stop-high-on-b { stop-color: var(--color-heat-high-b); }
+  .stop-medium-on-a { stop-color: var(--color-heat-medium-a); }
+  .stop-medium-on-b { stop-color: var(--color-heat-medium-b); }
+  .stop-low-on-a { stop-color: var(--color-heat-low-a); }
+  .stop-low-on-b { stop-color: var(--color-heat-low-b); }
+  .stop-high-off-a { stop-color: #fff2ee; }
+  .stop-high-off-b { stop-color: #fde2da; }
+  .stop-medium-off-a { stop-color: #fff8e8; }
+  .stop-medium-off-b { stop-color: #ffeac4; }
+  .stop-low-off-a { stop-color: #f3f4f5; }
+  .stop-low-off-b { stop-color: #e4e7ea; }
+  .count {
+    font-size: 15px;
+    font-weight: bold;
+    fill: var(--color-text);
+  }
+  .axis {
+    font-size: 10px;
+    fill: var(--color-text-muted);
+  }
+  .axis-note {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+</style>

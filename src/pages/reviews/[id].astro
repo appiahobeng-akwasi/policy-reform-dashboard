@@ -1,0 +1,43 @@
+---
+// One saved review pack, in the reader's language, with print and download (decision 53).
+import Base from '../../layouts/Base.astro';
+import { t } from '../../i18n';
+import { getPack } from '../../lib/reviews/pack';
+import { packTitle, renderPackBody } from '../../lib/reviews/render';
+import '../../styles/pack.css';
+
+const { lang, user } = Astro.locals;
+const id = Astro.params['id'] ?? '';
+if (!user) return Astro.redirect(`/sign-in?next=${encodeURIComponent(`/reviews/${id}`)}`, 303);
+if (!/^[0-9a-f-]{36}$/.test(id)) return new Response(null, { status: 404 });
+// Row-level security returns nothing to counterparts and for unknown IDs.
+const pack = await getPack(user.claims, id);
+if (!pack) return new Response(null, { status: 404 });
+const meta = { version: pack.version, generatedAt: pack.generatedAt, generatedBy: pack.generatedBy };
+const title = packTitle(lang, pack.reviewType, pack.reviewDate, pack.version);
+const prepared = Astro.url.searchParams.get('prepared') === '1';
+---
+
+<Base title={title}>
+  <p class="no-print"><a href="/reviews">{t(lang, 'reviews.back')}</a></p>
+  <h1>{title}</h1>
+  {prepared && <p class="notice no-print" role="status" data-testid="prepared">{t(lang, 'reviews.prepared_notice', { version: pack.version })}</p>}
+  <p class="actions no-print">
+    <a class="button" href={`/reviews/${id}/print`} data-testid="print">{t(lang, 'reviews.print')}</a>
+    <a class="button button-quiet" href={`/reviews/${id}/download`} data-testid="download">{t(lang, 'reviews.download')}</a>
+  </p>
+  <Fragment set:html={renderPackBody(lang, pack.data, meta)} />
+</Base>
+
+<style>
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  @media print {
+    .no-print {
+      display: none;
+    }
+  }
+</style>

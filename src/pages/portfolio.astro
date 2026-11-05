@@ -1,0 +1,338 @@
+---
+// Portfolio view (spec 01 section 8): which reform is ready, and how do reforms interact?
+// Readiness (six ratings and the proposed score, decision 58), the current pathway stage of each
+// reform, how many reforms sit at each stage, and dependencies that cross reforms. Server-rendered,
+// no page JavaScript. Counterparts see their reforms' stages only (decision 59): row-level security
+// gives them no readiness rows.
+import BarList from '../components/BarList.astro';
+import DataAsOf from '../components/DataAsOf.astro';
+import ReformChip from '../components/ReformChip.astro';
+import Ring from '../components/Ring.astro';
+import Base from '../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../i18n';
+import { asUser } from '../lib/server-db';
+import { dataAsOf, loadLabels } from '../lib/views';
+
+const { lang, user } = Astro.locals;
+if (!user) return Astro.redirect('/sign-in?next=%2Fportfolio', 303);
+const reformFilter = Astro.url.searchParams.get('reform') || null;
+const internal = user.role !== 'viewer_counterpart';
+
+const DIMENSIONS = ['political_commitment', 'institutional_ownership', 'technical_readiness', 'financial_readiness', 'stakeholder_alignment', 'implementation_capacity'] as const;
+type Readiness = Record<(typeof DIMENSIONS)[number], string | null> & {
+  reform_id: string;
+  assessment_date: string | null;
+  assessor: string | null;
+  comments: string | null;
+  score_proposed: number | null;
+  overall_score_source: string | null;
+};
+
+const data = await asUser(user.claims, async (db) => {
+  const reforms = await db.query<{ reform_id: string; name_en: string; name_fr: string | null; current_stage: string | null }>(
+    'select reform_id, name_en, name_fr, current_stage from reforms order by reform_id',
+  );
+  const stages = await db.query<{ code: string; label_en: string; label_fr: string | null; sort_order: number }>('select code, label_en, label_fr, sort_order from pathway_stages order by sort_order');
+  const readiness = await db.query<Readiness>(
+    `select reform_id, assessment_date, assessor, comments, score_proposed, overall_score_source, ${DIMENSIONS.join(', ')}
+       from v_readiness where is_latest order by reform_id`,
+  );
+  // Dependencies where the waiting item and the item it waits for are in different reforms.
+  const dependencies = await db.query<{ from_type: string; from_id: string; from_name: string; from_reform: string | null; to_type: string; to_id: string; to_name: string; to_reform: string | null; dependency_type: string; to_status: string }>(
+    `select d.from_type, d.from_id, f.name as from_name, f.reform_id as from_reform, d.to_type, d.to_id, t2.name as to_name, t2.reform_id as to_reform,
+            d.dependency_type, t2.status as to_status
+       from dependencies d
+       join v_delivery_items f on f.object_type = d.from_type and f.object_id = d.from_id
+       join v_delivery_items t2 on t2.object_type = d.to_type and t2.object_id = d.to_id
+      where f.reform_id is distinct from t2.reform_id
+      order by d.from_id`,
+  );
+  return {
+    reforms: reforms.rows,
+    stages: stages.rows,
+    readiness: readiness.rows,
+    dependencies: dependencies.rows,
+    asOf: await dataAsOf(db, 'portfolio'),
+    label: await loadLabels(db, ['confidence', 'delivery_status'], lang),
+  };
+});
+
+const shown = data.reforms.filter((r) => !reformFilter || r.reform_id === reformFilter);
+const stageName = (code: string | null) => {
+  const s = data.stages.find((x) => x.code === code);
+  return s ? (lang === 'fr' && s.label_fr ? s.label_fr : s.label_en) : '';
+};
+const stageIndex = (code: string | null) => data.stages.findIndex((s) => s.code === code);
+const reformName = (r: { name_en: string; name_fr: string | null }) => (lang === 'fr' && r.name_fr ? r.name_fr : r.name_en);
+// Stage distribution: how many of the shown reforms sit at each stage.
+const counts = data.stages.map((s) => shown.filter((r) => r.current_stage === s.code).length);
+const distribution = data.stages.map((st, i) => ({ label: lang === 'fr' && st.label_fr ? st.label_fr : st.label_en, value: counts[i] ?? 0 }));
+const latestReadiness = data.readiness.filter((r) => !reformFilter || r.reform_id === reformFilter);
+const rating = (value: string | null) => (value ? data.label('confidence', value) : t(lang, 'portfolio.not_rated'));
+---
+
+<Base title={t(lang, 'portfolio.title')}>
+  <h1>{t(lang, 'portfolio.title')}</h1>
+  <p class="question">{t(lang, 'portfolio.question')}</p>
+  <DataAsOf value={data.asOf} />
+
+  <form method="get" class="filters">
+    <div>
+      <label for="reform">{t(lang, 'views.filter_reform')}</label>
+      <select id="reform" name="reform">
+        <option value="">{t(lang, 'views.all')}</option>
+        {data.reforms.map((r) => <option value={r.reform_id} selected={reformFilter === r.reform_id}>{r.reform_id}</option>)}
+      </select>
+    </div>
+    <button class="button" type="submit">{t(lang, 'views.apply')}</button>
+  </form>
+
+  {
+    internal && (
+      <section>
+        <h2>{t(lang, 'portfolio.readiness')}</h2>
+        <p class="muted">{t(lang, 'portfolio.readiness_note')}</p>
+        {data.readiness.length === 0 ? (
+          <p>{t(lang, 'portfolio.readiness_none')}</p>
+        ) : (
+          <>
+          <ul class="gauges" data-testid="readiness-gauges">
+            {latestReadiness.map((r) => (
+              <li class="card gauge-card">
+                <Ring
+                  id={`readiness-${r.reform_id}`}
+                  size={112}
+                  gauge={{ value: r.score_proposed, max: 100, colour: 'emerald' }}
+                  track="#eef1ec"
+                  label={r.score_proposed === null ? t(lang, 'portfolio.no_score') : t(lang, 'portfolio.gauge_label', { reform: r.reform_id, score: r.score_proposed })}
+                >
+                  <span class="gauge-number">{r.score_proposed ?? '–'}</span>
+                </Ring>
+                <div>
+                  <ReformChip reformId={r.reform_id} label={r.reform_id} />
+                  <p class="gauge-note">{t(lang, 'portfolio.proposed_label')}</p>
+                  {r.overall_score_source && <p class="muted small">{t(lang, 'portfolio.source_score', { score: r.overall_score_source })}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div class="table-wrap">
+            <table class="data-table" data-testid="readiness">
+              <thead>
+                <tr>
+                  <th scope="col">{t(lang, 'views.filter_reform')}</th>
+                  {DIMENSIONS.map((d) => (
+                    <th scope="col">{t(lang, `portfolio.dim_${d}` as MessageKey)}</th>
+                  ))}
+                  <th scope="col" class="number">{t(lang, 'portfolio.score')}</th>
+                  <th scope="col">{t(lang, 'portfolio.assessed')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.readiness
+                  .filter((r) => !reformFilter || r.reform_id === reformFilter)
+                  .map((r) => (
+                    <tr data-reform={r.reform_id}>
+                      <th scope="row">{r.reform_id}</th>
+                      {DIMENSIONS.map((d) => (
+                        <td class:list={['rating', `rating-${r[d] ?? 'none'}`]}>{rating(r[d])}</td>
+                      ))}
+                      <td class="number">
+                        <strong data-testid="score">{r.score_proposed ?? t(lang, 'portfolio.no_score')}</strong>
+                        {r.overall_score_source && (
+                          <>
+                            <br />
+                            <span class="muted">{t(lang, 'portfolio.source_score', { score: r.overall_score_source })}</span>
+                          </>
+                        )}
+                      </td>
+                      <td>
+                        {r.assessment_date ? formatDate(r.assessment_date, lang) : ''}
+                        {r.assessor && (
+                          <>
+                            <br />
+                            <span class="muted">{r.assessor}</span>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          </>
+        )}
+        <p class="notice method" data-testid="score-method">{t(lang, 'portfolio.method')}</p>
+      </section>
+    )
+  }
+
+  <section>
+    <h2>{t(lang, 'portfolio.stages')}</h2>
+    <ul class="tracks">
+      {
+        shown.map((r) => (
+          <li data-reform={r.reform_id}>
+            <p>
+              <strong>{r.reform_id}</strong> {reformName(r)}: <a href={`/pathway?reform=${r.reform_id}`}>{stageName(r.current_stage) || t(lang, 'portfolio.no_stage')}</a>
+            </p>
+            <ol class="track" aria-label={t(lang, 'portfolio.track_label', { reform: r.reform_id })}>
+              {data.stages.map((s, i) => (
+                <li
+                  class:list={['step', { done: i < stageIndex(r.current_stage), current: i === stageIndex(r.current_stage) }]}
+                  aria-current={i === stageIndex(r.current_stage) ? 'step' : undefined}
+                  title={lang === 'fr' && s.label_fr ? s.label_fr : s.label_en}
+                >
+                  <span class="visually-hidden">{lang === 'fr' && s.label_fr ? s.label_fr : s.label_en}</span>
+                </li>
+              ))}
+            </ol>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section>
+    <h2>{t(lang, 'portfolio.distribution')}</h2>
+    <div class="card">
+      <BarList items={distribution} tone="emerald" testId="distribution" />
+    </div>
+  </section>
+
+  <section>
+    <h2>{t(lang, 'portfolio.dependencies')}</h2>
+    {
+      data.dependencies.length === 0 ? (
+        <p>{t(lang, 'portfolio.dependencies_none')}</p>
+      ) : (
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">{t(lang, 'portfolio.waiting')}</th>
+                <th scope="col">{t(lang, 'portfolio.waits_for')}</th>
+                <th scope="col">{t(lang, 'views.filter_status')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.dependencies.map((d) => (
+                <tr>
+                  <td>
+                    <a href={`/items/${d.from_type}/${d.from_id}`}>{d.from_id}</a> {d.from_name} ({d.from_reform ?? t(lang, 'reviews.programme_wide')})
+                  </td>
+                  <td>
+                    <a href={`/items/${d.to_type}/${d.to_id}`}>{d.to_id}</a> {d.to_name} ({d.to_reform ?? t(lang, 'reviews.programme_wide')})
+                  </td>
+                  <td>{data.label('delivery_status', d.to_status)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+    }
+  </section>
+</Base>
+
+<style>
+  section {
+    margin-top: var(--space-8);
+  }
+  .question {
+    font-size: var(--text-lg);
+  }
+  .rating-high {
+    color: var(--color-rag-green);
+    font-weight: var(--weight-bold);
+  }
+  .rating-low {
+    color: var(--color-rag-red);
+    font-weight: var(--weight-bold);
+  }
+  .rating-none {
+    color: var(--color-text-muted);
+  }
+  .tracks {
+    list-style: none;
+    padding: 0;
+  }
+  .tracks > li + li {
+    margin-top: var(--space-4);
+  }
+  .track {
+    display: flex;
+    gap: var(--space-1);
+    list-style: none;
+    padding: 0;
+    margin: var(--space-1) 0 0;
+    max-width: 28rem;
+  }
+  .tracks > li {
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-surface) var(--gradient-card);
+    box-shadow: var(--shadow-card);
+  }
+  .tracks > li > p {
+    margin: 0;
+  }
+  .track {
+    max-width: none;
+    margin-top: var(--space-2);
+  }
+  .step {
+    flex: 1;
+    height: 0.45rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface-hover);
+  }
+  .step.done {
+    background: var(--gradient-emerald);
+  }
+  .step.current {
+    background: var(--gradient-leaf);
+    box-shadow: 0 0 0 2px #d9f0c2;
+  }
+  /* One reform per card, the ring on top: three side by side, stacked on a narrow phone. */
+  .gauges {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-4);
+    margin: var(--space-4) 0;
+    padding: 0;
+    list-style: none;
+  }
+  .gauge-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    text-align: center;
+  }
+  .gauge-card > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  @media (max-width: 560px) {
+    .gauges {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .gauge-number {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-heavy);
+    letter-spacing: -0.02em;
+  }
+  .gauge-note {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-rag-amber);
+  }
+  .small {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+  }
+</style>

@@ -1,0 +1,39 @@
+{
+  "rule": "Q14",
+  "pass": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "indicator_value",
+        "op": "create",
+        "fields": {
+          "indicator_code": "O1.1",
+          "reform_id": "RA1",
+          "period_end": "2026-09-30",
+          "value": 12,
+          "confidence": "medium",
+          "evidence_basis": "Ministry register, September extract"
+        }
+      }
+    ]
+  },
+  "fail": {
+    "route": "web_form",
+    "rows": [
+      {
+        "entity": "indicator_value",
+        "op": "create",
+        "fields": {
+          "indicator_code": "O1.1",
+          "reform_id": "RA1",
+          "period_end": "2026-09-30",
+          "value": 12,
+          "confidence": "medium"
+        }
+      }
+    ],
+    "expect": {
+      "field": "evidence_basis"
+    }
+  }
+}

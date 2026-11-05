@@ -1,0 +1,317 @@
+---
+// Left sidebar (docs/08 v0.2 section 2): the sprout mark, a Getting started checklist for new
+// people who send updates, then Work, Views and Admin, with counts as pills. The current page sits
+// on a white card. Language, account and sign out are in the top bar. Collapses to icons on
+// medium screens; on phones it opens from Menu in the tab bar (a link to #menu, so it needs no
+// JavaScript) and closes with the close link or Esc.
+import { t, type MessageKey } from '../i18n';
+import type { Access, GettingStarted } from '../lib/shell';
+import BrandMark from './BrandMark.astro';
+import Icon from './Icon.astro';
+
+interface Props {
+  access: Access;
+  approvals: number;
+  started: GettingStarted | null;
+}
+const { access, approvals, started } = Astro.props;
+const { lang } = Astro.locals;
+const path = Astro.url.pathname;
+type Link = { href: string; key: MessageKey; icon: Parameters<typeof Icon>[0]['name']; testId?: string | undefined; count?: number | undefined };
+const current = (href: string) => (path === href || path.startsWith(`${href}/`) ? 'page' : undefined);
+
+const work: Link[] = [
+  { href: '/my-items', key: 'nav.my_items', icon: 'items' },
+  ...(access.approver
+    ? [{ href: '/approvals', key: 'nav.approvals' as MessageKey, icon: 'approvals' as const, testId: 'nav-approvals', count: approvals > 0 ? approvals : undefined }]
+    : []),
+  ...(access.bulk ? [{ href: '/uploads', key: 'nav.uploads' as MessageKey, icon: 'upload' as const }] : []),
+  ...(access.admin ? [{ href: '/on-behalf', key: 'nav.on_behalf' as MessageKey, icon: 'someone' as const }] : []),
+  ...(access.internal ? [{ href: '/reviews', key: 'nav.reviews' as MessageKey, icon: 'reviews' as const }] : []),
+];
+const views: Link[] = [
+  { href: '/executive', key: 'nav.executive', icon: 'executive' },
+  { href: '/portfolio', key: 'nav.portfolio', icon: 'portfolio' },
+  { href: '/pathway', key: 'nav.pathway', icon: 'pathway' },
+  ...(access.internal
+    ? ([
+        { href: '/risks', key: 'nav.risks', icon: 'risks' },
+        { href: '/merl', key: 'nav.merl', icon: 'merl' },
+        { href: '/governance', key: 'nav.governance', icon: 'governance' },
+      ] as Link[])
+    : []),
+];
+const admin: Link[] = access.admin
+  ? [
+      { href: '/admin/data-quality', key: 'nav.data_quality', icon: 'data' },
+      { href: '/admin/users', key: 'nav.people_access', icon: 'people' },
+      { href: '/admin/jobs', key: 'nav.jobs', icon: 'jobs' },
+      { href: '/admin/errors', key: 'nav.errors', icon: 'errors' },
+    ]
+  : [];
+// Getting started: what this person has done so far, worked out from their own records.
+const steps = started
+  ? [
+      { key: 'start.sign_in' as MessageKey, done: true },
+      { key: 'start.send' as MessageKey, done: started.sent, href: '/my-items' },
+      { key: 'start.evidence' as MessageKey, done: started.evidence, href: '/my-items' },
+      ...(access.approver ? [{ key: 'start.review' as MessageKey, done: started.reviewed, href: '/approvals' }] : []),
+    ]
+  : [];
+const doneSteps = steps.filter((s) => s.done).length;
+const nextStep = steps.find((s) => !s.done);
+const groups = [
+  { key: 'nav.work_label' as MessageKey, testId: 'nav-work', links: work },
+  { key: 'nav.views_label' as MessageKey, testId: 'nav-views', links: views },
+  ...(admin.length > 0 ? [{ key: 'nav.admin' as MessageKey, testId: 'nav-admin', links: admin, href: '/admin' }] : []),
+];
+---
+
+<aside class="sidebar" id="menu" aria-label={t(lang, 'nav.menu')}>
+  <div class="sidebar-top">
+    <a class="brand" href="/executive">
+      <BrandMark />
+      <span class="brand-name">{t(lang, 'app.short_name')}</span>
+      <span class="badge">{t(lang, 'app.prototype_badge')}</span>
+    </a>
+    <a class="close-menu" href="#" aria-label={t(lang, 'nav.close_menu')}><Icon name="close" /></a>
+  </div>
+  {
+    nextStep && (
+      <section class="start" aria-labelledby="start-title" data-testid="getting-started">
+        <p class="start-title" id="start-title">
+          <Icon name="check_circle" />
+          {t(lang, 'start.title')}
+        </p>
+        <p class="start-next">
+          {t(lang, 'start.next')} <a href={nextStep.href}>{t(lang, nextStep.key)}</a>
+        </p>
+        <span class="start-bar" aria-hidden="true">
+          <span class={`start-fill w-${Math.round((doneSteps / steps.length) * 20) * 5}`} />
+        </span>
+        <p class="start-count">{t(lang, 'start.progress', { done: doneSteps, total: steps.length })}</p>
+      </section>
+    )
+  }
+  {
+    groups.map((g) => (
+      <nav class="group" aria-label={t(lang, g.key)} data-testid={g.testId}>
+        {'href' in g && g.href ? (
+          <a class="group-label" href={g.href}>
+            {t(lang, g.key)}
+          </a>
+        ) : (
+          <p class="group-label">{t(lang, g.key)}</p>
+        )}
+        {g.links.map((l) => (
+          <a href={l.href} aria-current={current(l.href)} title={t(lang, l.key)} data-testid={l.testId}>
+            <Icon name={l.icon} />
+            <span class="label">{t(lang, l.key)}</span>
+            {l.count !== undefined && (
+              <span class="nav-count">
+                {l.count}
+                <span class="visually-hidden"> {t(lang, 'nav.waiting')}</span>
+              </span>
+            )}
+          </a>
+        ))}
+      </nav>
+    ))
+  }
+</aside>
+<a class="menu-backdrop" href="#" tabindex="-1" aria-hidden="true"></a>
+
+<style>
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    width: var(--sidebar-width);
+    padding: var(--space-4) var(--space-3);
+  }
+  .sidebar-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space-2);
+  }
+  .brand {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-text);
+    text-decoration: none;
+    font-weight: var(--weight-bold);
+    font-size: var(--text-base);
+  }
+  .close-menu,
+  .menu-backdrop {
+    display: none;
+  }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .group-label {
+    margin: 0 0 var(--space-1);
+    padding: 0 var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-muted);
+    text-decoration: none;
+  }
+  .group a:not(.group-label) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 2.5rem;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    font-size: var(--text-md);
+    text-decoration: none;
+  }
+  .group a:not(.group-label):hover {
+    background: rgb(255 255 255 / 60%);
+  }
+  .group a[aria-current='page'] {
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+    color: var(--color-text);
+    font-weight: var(--weight-bold);
+  }
+  .group a[aria-current='page'] :global(.icon) {
+    color: var(--color-accent);
+  }
+  .nav-count {
+    margin-left: auto;
+    min-width: 1.5rem;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-round);
+    background: var(--color-danger) var(--gradient-danger);
+    color: #ffffff;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    line-height: 1.375rem;
+    text-align: center;
+  }
+  .start {
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface) var(--gradient-card);
+    box-shadow: var(--shadow-card);
+  }
+  .start p {
+    margin: 0;
+  }
+  .start-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-md);
+    font-weight: var(--weight-bold);
+  }
+  .start-title :global(.icon) {
+    color: var(--color-accent);
+  }
+  .start .start-next {
+    margin: var(--space-1) 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .start-bar {
+    position: relative;
+    display: block;
+    height: 0.375rem;
+    border-radius: var(--radius-round);
+    background: var(--color-surface-hover);
+    overflow: hidden;
+  }
+  .start-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: var(--radius-round);
+    background: var(--gradient-emerald);
+  }
+  .start .start-count {
+    margin-top: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+
+  /* Medium screens: icons only; the names stay for screen readers and as tooltips. */
+  @media (max-width: 1100px) and (min-width: 768px) {
+    .sidebar {
+      width: 4rem;
+      padding: var(--space-4) var(--space-2);
+      align-items: center;
+    }
+    .label,
+    .group-label,
+    .brand-name,
+    .brand .badge {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .group a:not(.group-label) {
+      justify-content: center;
+      width: 2.5rem;
+    }
+    .start {
+      display: none;
+    }
+    .nav-count {
+      position: absolute;
+      transform: translate(0.75rem, -0.75rem);
+      min-width: 1.125rem;
+      padding: 0 0.25rem;
+      line-height: 1.125rem;
+      font-size: 0.6875rem;
+    }
+  }
+
+  /* Phones: hidden until the Menu button opens it, over the page. */
+  @media (max-width: 767px) {
+    .sidebar {
+      display: none;
+      position: fixed;
+      z-index: 40;
+      left: 0;
+      top: 0;
+      width: min(18rem, 85vw);
+      background: var(--color-canvas);
+      box-shadow: var(--shadow-float);
+    }
+    .sidebar:target {
+      display: flex;
+      animation: slide-in var(--motion);
+    }
+    .sidebar:target + .menu-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      background: rgb(20 22 20 / 30%);
+    }
+    .close-menu {
+      display: inline-flex;
+      padding: var(--space-2);
+      color: var(--color-text);
+    }
+  }
+  @keyframes slide-in {
+    from {
+      transform: translateX(-100%);
+    }
+  }
+</style>

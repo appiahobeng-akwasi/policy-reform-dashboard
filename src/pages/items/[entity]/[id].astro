@@ -1,0 +1,690 @@
+---
+// The update card (docs/01 section 5.1). Works as a plain HTML form; the browser script adds
+// live hints, drafts on the device, retries and resumable uploads. Every change becomes a
+// submission that goes through the gate, then approval (CLAUDE.md rule 2).
+import ActivityList from '../../../components/ActivityList.astro';
+import DueBar from '../../../components/DueBar.astro';
+import Icon from '../../../components/Icon.astro';
+import ObjectIcon from '../../../components/ObjectIcon.astro';
+import RagPill from '../../../components/RagPill.astro';
+import ReformChip from '../../../components/ReformChip.astro';
+import StatusPill from '../../../components/StatusPill.astro';
+import Toast from '../../../components/Toast.astro';
+import SampleBadge from '../../../components/SampleBadge.astro';
+import Base from '../../../layouts/Base.astro';
+import { formatDate, t, type MessageKey } from '../../../i18n';
+import { withoutRowPrefix } from '../../../lib/gate/messages';
+import { isIsoDate, kinshasaToday } from '../../../lib/gate/dates';
+import { SCHEMA_LISTS } from '../../../lib/gate/entities';
+import type { GateContext, GateRow } from '../../../lib/gate/types';
+import { buildUpdateRow, cardFields, evidenceRow, formValue, isDeliveryEntity } from '../../../lib/item-rows';
+import { loadActivity, loadChoices, loadEvidence, loadItem, loadLatestSubmission, mayReadActivity, type LatestSubmission } from '../../../lib/items';
+import { asUser } from '../../../lib/server-db';
+import { loadUploads, ON_BEHALF_CHANNELS, receiveFormFile, sendUpdate, type OnBehalf } from '../../../lib/updates';
+
+const { lang, user } = Astro.locals;
+const { entity, id } = Astro.params;
+if (!user) return Astro.redirect('/sign-in', 303);
+if (!isDeliveryEntity(entity) || !id) return new Response(null, { status: 404 });
+
+const loaded = await asUser(user.claims, async (db) => {
+  const item = await loadItem(db, entity, id);
+  if (!item) return null;
+  const [choices, evidence, latest, scope, evidenceTypes] = await Promise.all([
+    loadChoices(db),
+    loadEvidence(db, entity, id),
+    loadLatestSubmission(db, entity, id),
+    db.query<{ reforms: string[] }>('select my_reform_ids() as reforms'),
+    db.query<{ code: string; label_en: string; label_fr: string }>(
+      "select code, label_en, label_fr from lookup_values where list_name = 'evidence_type' and is_active order by sort_order",
+    ),
+  ]);
+  const rag = await db.query<{ label_en: string; label_fr: string }>("select label_en, label_fr from lookup_values where list_name = 'rag' and code = $1", [item.rag]);
+  const lastUpdate = await db.query<{ changed_at: string; entered_by: string | null; entered_for: string | null }>(
+    'select changed_at::text, entered_by, entered_for from item_last_update($1, $2)',
+    [entity, id],
+  );
+  const myReforms = scope.rows[0]?.reforms ?? [];
+  const activity = mayReadActivity(user, item, myReforms) ? await loadActivity(db, entity, id) : null;
+  return { item, choices, evidence, latest, myReforms, evidenceTypes: evidenceTypes.rows, ragLabel: rag.rows[0], lastUpdate: lastUpdate.rows[0] ?? null, activity };
+});
+if (!loaded) return new Response(null, { status: 404 });
+const { item, choices, evidence, myReforms, evidenceTypes } = loaded;
+let latest: LatestSubmission | null = loaded.latest;
+
+const isAdmin = user.role === 'super_admin' || user.role === 'programme_admin';
+const inScope = item.reformId !== null && myReforms.includes(item.reformId);
+const canSubmit = isAdmin || ((user.role === 'reform_lead' || user.role === 'contributor') && inScope);
+const canAssignOwner = isAdmin || (user.role === 'reform_lead' && inScope);
+const fields = cardFields(entity, canAssignOwner);
+
+// Entering for someone else (spec 01 section 5.3): programme admins only (decision 30).
+const forParam = Astro.url.searchParams.get('for');
+const onBehalfPerson = isAdmin && forParam ? (choices.people.find((p) => p.person_id === forParam) ?? null) : null;
+const today = kinshasaToday();
+let onBehalfProblem: 'channel_needed' | 'date_needed' | null = null;
+let obChannel = '';
+let obReceivedOn = today;
+let obNote = '';
+let instruction: { uploadId: string; fileName: string } | null = null;
+const label = (list: string, code: string) => {
+  const found = choices.lists.find((l) => l.list_name === list && l.code === code);
+  return found ? (lang === 'fr' ? found.label_fr : found.label_en) : code;
+};
+
+// --- Sending -------------------------------------------------------------------------------
+type Problem = { field: string | null; row: number | null; message: string; severity: string };
+let problems: Problem[] = [];
+let score: number | null = null;
+let notice: 'no_changes' | 'upload' | null = null;
+let uploadProblem: string | null = null;
+let formValues: Record<string, unknown> = { ...item.record };
+let pendingUploads: { uploadId: string; fileName: string; title: string; evidenceType: string; evidenceDate: string; source: string }[] = [];
+let submissionId: string | null = latest && ['rejected_by_gate', 'returned', 'draft'].includes(latest.status) ? latest.submissionId : null;
+const wantsJson = (Astro.request.headers.get('accept') ?? '').includes('application/json');
+
+if (Astro.request.method === 'POST' && canSubmit) {
+  const form = await Astro.request.formData();
+  const confirmOnly = form.get('action') === 'confirm';
+  const values: Record<string, unknown> = {};
+  for (const field of fields) values[field] = formValue(field, form.get(field));
+  formValues = { ...item.record, ...values };
+  const version = String(form.get('base_updated_at') ?? item.version);
+  const formSubmission = form.get('submission_id');
+  if (typeof formSubmission === 'string' && formSubmission) submissionId = formSubmission;
+
+  // Without JavaScript, a single file comes with the form; check it like a resumable upload.
+  const uploadIds = form.getAll('evidence_upload_id').filter((v): v is string => typeof v === 'string' && v !== '');
+  const file = form.get('evidence_file');
+  if (file instanceof File && file.size > 0) {
+    const received = await receiveFormFile(user, file);
+    if (received.ok) uploadIds.push(received.uploadId);
+    else uploadProblem = t(lang, `evidence.bad_${received.reason === 'missing' ? 'type' : received.reason}` as MessageKey);
+  }
+  const uploads = await loadUploads(user, uploadIds);
+
+  let onBehalf: OnBehalf | null = null;
+  if (onBehalfPerson) {
+    obChannel = String(form.get('on_behalf_channel') ?? '');
+    obReceivedOn = String(form.get('on_behalf_received_on') ?? '').trim();
+    obNote = String(form.get('on_behalf_note') ?? '').trim().slice(0, 2000);
+    let instructionId = String(form.get('instruction_upload_id') ?? '');
+    const instructionFile = form.get('instruction_file');
+    if (instructionFile instanceof File && instructionFile.size > 0) {
+      const received = await receiveFormFile(user, instructionFile);
+      if (received.ok) instructionId = received.uploadId;
+      else uploadProblem = t(lang, `evidence.bad_${received.reason === 'missing' ? 'type' : received.reason}` as MessageKey);
+    }
+    const [found] = instructionId ? await loadUploads(user, [instructionId]) : [];
+    instruction = found ? { uploadId: found.upload_id, fileName: found.file_name } : null;
+    if (!(ON_BEHALF_CHANNELS as readonly string[]).includes(obChannel)) onBehalfProblem = 'channel_needed';
+    else if (!isIsoDate(obReceivedOn) || obReceivedOn > today) onBehalfProblem = 'date_needed';
+    onBehalf = { personId: onBehalfPerson.person_id, channel: obChannel, receivedOn: obReceivedOn, note: obNote || null, instructionUploadId: instruction?.uploadId ?? null };
+  }
+  pendingUploads = uploads.map((u) => ({
+    uploadId: u.upload_id,
+    fileName: u.file_name,
+    title: String(form.get(`evidence_title_${u.upload_id}`) ?? '').trim() || u.file_name.replace(/\.[^.]+$/, ''),
+    evidenceType: String(form.get(`evidence_type_${u.upload_id}`) ?? 'other'),
+    evidenceDate: String(form.get(`evidence_date_${u.upload_id}`) ?? '').trim(),
+    source: String(form.get(`evidence_source_${u.upload_id}`) ?? '').trim(),
+  }));
+
+  const update = buildUpdateRow({ ...item, version }, confirmOnly ? {} : values, fields);
+  const rows: GateRow[] = [
+    update,
+    ...uploads.map((u, i) =>
+      evidenceRow(
+        u,
+        {
+          title: pendingUploads[i]!.title,
+          evidenceType: pendingUploads[i]!.evidenceType,
+          evidenceDate: pendingUploads[i]!.evidenceDate || null,
+          sourceInstitution: pendingUploads[i]!.source || null,
+        },
+        { entity, id },
+      ),
+    ),
+  ];
+
+  if (uploadProblem) {
+    notice = 'upload';
+  } else if (onBehalfProblem) {
+    // Nothing is sent until how and when it was received are given.
+  } else if (!confirmOnly && Object.keys(update.fields ?? {}).length === 0 && uploads.length === 0) {
+    notice = 'no_changes';
+  } else {
+    const sent = await sendUpdate(user, rows, submissionId, onBehalf);
+    submissionId = sent.submissionId;
+    if (sent.result.outcome === 'pass') {
+      const next = `/items/${entity}/${id}?sent=1${onBehalfPerson ? `&for=${onBehalfPerson.person_id}` : ''}`;
+      if (wantsJson) return Response.json({ ok: true, redirect: next });
+      return Astro.redirect(next, 303);
+    }
+    score = sent.result.qualityScore;
+    problems = sent.result.findings
+      .filter((f) => f.severity !== 'fixed')
+      .map((f) => ({ field: f.field, row: f.rowRef, severity: f.severity, message: withoutRowPrefix(lang === 'fr' ? f.messageFr : f.messageEn) }));
+    latest = null;
+  }
+  if (wantsJson) {
+    return Response.json({
+      ok: false,
+      submissionId,
+      score,
+      problems,
+      notice: onBehalfProblem ? t(lang, `onbehalf.${onBehalfProblem}`) : notice === 'no_changes' ? t(lang, 'card.no_changes') : uploadProblem,
+    });
+  }
+} else if (latest && ['rejected_by_gate', 'returned', 'draft'].includes(latest.status)) {
+  // Show the last attempt again so the person can fix it.
+  const updateRow = latest.rows.find((r) => r.entity === entity && r.id === id);
+  formValues = { ...item.record, ...(updateRow?.fields ?? {}) };
+  score = latest.qualityScore;
+  problems = latest.findings
+    .filter((f) => f.severity !== 'fixed')
+    .map((f) => ({ field: f.field, row: null, severity: f.severity, message: withoutRowPrefix(lang === 'fr' ? f.messageFr : f.messageEn) }));
+}
+
+const sent = Astro.url.searchParams.get('sent') === '1';
+const awaiting = latest?.status === 'proposed';
+const problemsFor = (field: string) => problems.filter((p) => p.field === field && (p.row === null || p.row === 1));
+const otherProblems = problems.filter((p) => p.field === null || !fields.includes(p.field) || (p.row !== null && p.row !== 1));
+// The card's fields in three folding sections (decision 84); every field is in exactly one.
+const SECTIONS = [
+  { key: 'card.section_status', fields: ['owner_person_id', 'status', 'progress_pct', 'forecast_date', 'actual_date'], evidence: false },
+  { key: 'card.section_next', fields: ['next_action', 'blocker', 'comments'], evidence: false },
+  { key: 'card.section_evidence', fields: ['evidence_confidence'], evidence: true },
+] as const;
+const sections = SECTIONS.map((sec) => ({ ...sec, fields: sec.fields.filter((f) => fields.includes(f)) }));
+const chipState = (field: string) => (problemsFor(field).some((p) => p.severity === 'error') ? 'error' : problemsFor(field).length > 0 ? 'warning' : 'ok');
+const closeHref = `/my-items?open=${entity}/${id}`;
+const value = (field: string) => {
+  const v = formValues[field];
+  return v === null || v === undefined ? '' : String(v);
+};
+const dueField = entity === 'milestone' ? 'planned_date' : 'due_date';
+const record = item.record;
+
+// What the browser needs for live hints: the same engine and rule set, with the live data it can know.
+const context: Omit<GateContext, 'today'> & { today: string } = {
+  today: kinshasaToday(),
+  mode: 'gate',
+  lists: {
+    delivery_status: choices.lists.filter((l) => l.list_name === 'delivery_status').map((l) => l.code),
+    confidence: choices.lists.filter((l) => l.list_name === 'confidence').map((l) => l.code),
+    ...SCHEMA_LISTS,
+  },
+  existing: [...choices.people.map((p) => `person:${p.person_id}`), `${entity}:${id}`, ...(item.reformId ? [`reform:${item.reformId}`] : [])],
+  stored: { [`${entity}:${id}`]: record },
+  evidenceLinked: evidence.length > 0 ? [`${entity}:${id}`] : [],
+};
+const config = {
+  entity,
+  id,
+  owner: user.userId,
+  lang,
+  version: item.version,
+  fields,
+  context,
+  sent,
+  strings: {
+    sending: t(lang, 'card.sending'),
+    offlineRetry: t(lang, 'card.offline_retry'),
+    sendFailed: t(lang, 'card.send_failed'),
+    liveScore: t(lang, 'card.live_score'),
+    score: t(lang, 'card.score'),
+    rejected: t(lang, 'card.rejected'),
+    draftRestored: t(lang, 'card.draft_restored'),
+    draftDiscard: t(lang, 'card.draft_discard'),
+    uploading: t(lang, 'evidence.uploading'),
+    paused: t(lang, 'evidence.paused'),
+    checking: t(lang, 'evidence.checking'),
+    ready: t(lang, 'evidence.ready'),
+    remove: t(lang, 'evidence.remove'),
+    instructionReady: t(lang, 'onbehalf.instruction_ready'),
+    failed: t(lang, 'evidence.failed'),
+    bad_type: t(lang, 'evidence.bad_type'),
+    bad_macro: t(lang, 'evidence.bad_macro'),
+    bad_size: t(lang, 'evidence.bad_size'),
+    bad_empty: t(lang, 'evidence.bad_empty'),
+    title: t(lang, 'evidence.add_title'),
+    type: t(lang, 'evidence.type'),
+    date: t(lang, 'evidence.date'),
+    source: t(lang, 'evidence.source'),
+  },
+  evidenceTypes: evidenceTypes.map((e) => ({ code: e.code, label: lang === 'fr' ? e.label_fr : e.label_en })),
+};
+const configJson = JSON.stringify(config).replace(/</g, '\\u003c');
+const ragLabel = loaded.ragLabel ? (lang === 'fr' ? loaded.ragLabel.label_fr : loaded.ragLabel.label_en) : item.rag;
+const fieldLabel = (field: string) => t(lang, (field === 'owner_person_id' ? 'card.owner' : `card.${field}`) as MessageKey);
+---
+
+<Base title={String(record['name'] ?? id)} focus={{ closeHref }}>
+  <div class="reading">
+  <p class="crumb"><a href={closeHref}><Icon name="arrow_left" /> {t(lang, 'items.title')}</a></p>
+  <div class="page-head focus-head">
+    <p class="item-type"><ObjectIcon kind={entity} size="sm" /> {t(lang, `items.type_${entity}` as MessageKey)} · {id}</p>
+    <h1>{String(record['name'] ?? id)}{record['is_sample'] === true && <SampleBadge />}</h1>
+    <div class="pills">
+      <StatusPill status={String(record['status'] ?? '')} label={label('delivery_status', String(record['status'] ?? ''))} />
+      <RagPill rag={item.rag} label={ragLabel} />
+    </div>
+  </div>
+  <dl class="facts card">
+    <div>
+      <dt>{t(lang, 'items.col_item')}</dt>
+      <dd>{t(lang, `items.type_${entity}` as MessageKey)} · {id}</dd>
+    </div>
+    <div>
+      <dt>{t(lang, 'card.reform')}</dt>
+      <dd><ReformChip reformId={item.reformId} label={item.reformId ?? t(lang, 'items.programme_wide')} /></dd>
+    </div>
+    <div>
+      <dt>{t(lang, 'card.due')}</dt>
+      <dd class="tabular">
+        <DueBar daysOverdue={item.daysOverdue} daysToDue={item.daysToDue} hasDueDate={Boolean(record[dueField])} />
+        {record[dueField] ? formatDate(String(record[dueField]), lang) : ''}
+        {item.daysOverdue > 0 && <span class="late">{t(lang, 'items.overdue', { days: item.daysOverdue })}</span>}
+      </dd>
+    </div>
+    <div>
+      <dt>{t(lang, 'card.rag')}</dt>
+      <dd><RagPill rag={item.rag} label={ragLabel} /></dd>
+    </div>
+    <div>
+      <dt>{t(lang, 'card.owner')}</dt>
+      <dd>{item.ownerName ?? <span class="late">{t(lang, 'items.no_owner')}</span>}</dd>
+    </div>
+    <div>
+      <dt>{t(lang, 'card.last_confirmed')}</dt>
+      <dd class="tabular">
+        {record['last_confirmed_at'] ? formatDate(String(record['last_confirmed_at']), lang) : t(lang, 'items.never')}
+        {item.isStale && <span class="sub-stale">{t(lang, 'items.stale')}</span>}
+      </dd>
+    </div>
+  </dl>
+
+  {
+    loaded.lastUpdate?.entered_by && (
+      <p class="hint" data-testid="last-update">
+        {loaded.lastUpdate.entered_for
+          ? t(lang, 'onbehalf.last_update_for', { date: formatDate(loaded.lastUpdate.changed_at, lang), by: loaded.lastUpdate.entered_by, for: loaded.lastUpdate.entered_for })
+          : t(lang, 'onbehalf.last_update', { date: formatDate(loaded.lastUpdate.changed_at, lang), by: loaded.lastUpdate.entered_by })}
+      </p>
+    )
+  }
+  {
+    loaded.activity && (
+      <details class="card activity-card" data-testid="card-activity">
+        <summary>
+          <Icon name="clock" /> {t(lang, 'items.panel_activity')}
+        </summary>
+        <ActivityList events={loaded.activity} />
+      </details>
+    )
+  }
+  {sent && <Toast testId="sent" message={onBehalfPerson ? t(lang, 'onbehalf.sent_for', { name: onBehalfPerson.full_name }) : t(lang, 'card.sent')} />}
+  {onBehalfProblem && <p class="error" role="alert" data-testid="on-behalf-problem">{t(lang, `onbehalf.${onBehalfProblem}`)}</p>}
+  {awaiting && !sent && <p class="notice" role="status">{t(lang, 'card.awaiting')}</p>}
+  {latest?.status === 'returned' && latest.reviewNote && <p class="error" role="alert">{t(lang, 'card.returned', { note: latest.reviewNote })}</p>}
+  {notice === 'no_changes' && <p class="notice" role="status" data-testid="no-changes">{t(lang, 'card.no_changes')}</p>}
+  {uploadProblem && <p class="error" role="alert">{uploadProblem}</p>}
+
+  <section aria-labelledby="evidence-heading" class="evidence">
+    <h2 id="evidence-heading">{t(lang, 'evidence.title')}</h2>
+    {
+      evidence.length === 0 ? (
+        <p>{t(lang, 'evidence.none')}</p>
+      ) : (
+        <ul>
+          {evidence.map((e) => (
+            <li>
+              {e.hasFile ? <a href={`/evidence/${e.evidenceId}`}>{e.title}</a> : e.title} ({e.evidenceId},{' '}
+              {t(lang, `evidence.status_${e.validationStatus}` as MessageKey)}){!e.hasFile && <> · {t(lang, 'evidence.no_file')}</>}
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+
+  {
+    canSubmit ? (
+      <form method="post" enctype="multipart/form-data" class="card stack" id="update-card" novalidate>
+        <h2>{t(lang, 'card.title')}</h2>
+        <div id="card-status" role="status" aria-live="polite" class:list={[{ error: problems.length > 0 }]}>
+          {problems.length > 0 && (
+            <>
+              <p>{t(lang, 'card.rejected')}</p>
+              {score !== null && <p data-testid="score">{t(lang, 'card.score', { score })}</p>}
+            </>
+          )}
+        </div>
+        <input type="hidden" name="base_updated_at" value={item.version} />
+        <ul class="check-chips" aria-label={t(lang, 'card.checks_label')}>
+          {fields.map((field) => (
+            <li data-chip-for={field} data-state={chipState(field)}>
+              <span class="chip-ok" aria-hidden="true"><Icon name="check_circle" /></span>
+              <span class="chip-bad" aria-hidden="true"><Icon name="warning" /></span>
+              {fieldLabel(field)}
+            </li>
+          ))}
+        </ul>
+        {onBehalfPerson && (
+          <fieldset class="stack on-behalf">
+            <legend>{t(lang, 'onbehalf.mode_note', { name: onBehalfPerson.full_name })}</legend>
+            <div>
+              <label for="ob-channel">{t(lang, 'onbehalf.channel')}</label>
+              <select id="ob-channel" name="on_behalf_channel" required>
+                <option value="">{t(lang, 'onbehalf.channel_choose')}</option>
+                {ON_BEHALF_CHANNELS.map((c) => (
+                  <option value={c} selected={obChannel === c}>
+                    {t(lang, `onbehalf.channel_${c}` as MessageKey)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label for="ob-date">{t(lang, 'onbehalf.received_on')}</label>
+              <input id="ob-date" type="date" name="on_behalf_received_on" value={obReceivedOn} max={today} required />
+            </div>
+            <div>
+              <label for="ob-note">{t(lang, 'onbehalf.note')}</label>
+              <textarea id="ob-note" name="on_behalf_note" rows="2" maxlength="2000">{obNote}</textarea>
+            </div>
+            <div>
+              <label for="instruction-file">{t(lang, 'onbehalf.instruction')}</label>
+              <p class="hint">{t(lang, 'onbehalf.instruction_hint')}</p>
+              <input type="hidden" name="instruction_upload_id" value={instruction?.uploadId ?? ''} />
+              {instruction && <p data-testid="instruction-ready">{t(lang, 'onbehalf.instruction_ready', { name: instruction.fileName })}</p>}
+              <input id="instruction-file" type="file" name="instruction_file" accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,image/*" />
+              <div id="instruction-status" role="status" aria-live="polite"></div>
+            </div>
+          </fieldset>
+        )}
+        <input type="hidden" name="submission_id" value={submissionId ?? ''} />
+
+        {sections.map((sec) => (
+          <details class="section" open data-section={sec.key}>
+            <summary>{t(lang, sec.key as MessageKey)}</summary>
+            {sec.fields.map((field) => (
+              <div class="field" data-field={field}>
+                <label for={`f-${field}`}>{fieldLabel(field)}</label>
+                {field === 'status' || field === 'evidence_confidence' ? (
+                  <select id={`f-${field}`} name={field} aria-describedby={`h-${field}`}>
+                    {field === 'evidence_confidence' && <option value="">{t(lang, 'card.choose')}</option>}
+                    {choices.lists
+                      .filter((l) => l.list_name === (field === 'status' ? 'delivery_status' : 'confidence'))
+                      .map((l) => (
+                        <option value={l.code} selected={value(field) === l.code}>
+                          {label(l.list_name, l.code)}
+                        </option>
+                      ))}
+                  </select>
+                ) : field === 'owner_person_id' ? (
+                  <select id={`f-${field}`} name={field} aria-describedby={`h-${field}`}>
+                    <option value="">{t(lang, 'card.owner_none')}</option>
+                    {choices.people.map((p) => (
+                      <option value={p.person_id} selected={value(field) === p.person_id}>
+                        {p.full_name}
+                      </option>
+                    ))}
+                  </select>
+                ) : field.endsWith('_date') ? (
+                  <input id={`f-${field}`} name={field} type="date" value={value(field)} aria-describedby={`h-${field}`} />
+                ) : field === 'progress_pct' ? (
+                  <input id={`f-${field}`} name={field} type="number" inputmode="numeric" min="0" max="100" step="1" value={value(field)} aria-describedby={`h-${field}`} />
+                ) : (
+                  <textarea id={`f-${field}`} name={field} rows="2" maxlength="2000" aria-describedby={`h-${field}`}>{value(field)}</textarea>
+                )}
+                <div class="hints" id={`h-${field}`} data-hint-for={field}>
+                  {problemsFor(field).map((p) => (
+                    <p class={p.severity === 'error' ? 'hint-error' : 'hint-warning'}>{p.message}</p>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {sec.evidence && (
+            <fieldset class="stack" id="evidence-uploads">
+              <legend>{t(lang, 'evidence.add')}</legend>
+              <p class="hint">{t(lang, 'evidence.add_hint')}</p>
+              <div id="pending-uploads" class="stack">
+                {pendingUploads.map((u) => (
+                  <div class="upload" data-upload-id={u.uploadId}>
+                    <input type="hidden" name="evidence_upload_id" value={u.uploadId} />
+                    <p>
+                      <a href={`/evidence/uploads/${u.uploadId}`}>{u.fileName}</a>
+                    </p>
+                    <label for={`t-${u.uploadId}`}>{t(lang, 'evidence.add_title')}</label>
+                    <input id={`t-${u.uploadId}`} type="text" name={`evidence_title_${u.uploadId}`} value={u.title} />
+                    <label for={`y-${u.uploadId}`}>{t(lang, 'evidence.type')}</label>
+                    <select id={`y-${u.uploadId}`} name={`evidence_type_${u.uploadId}`}>
+                      {evidenceTypes.map((e) => (
+                        <option value={e.code} selected={u.evidenceType === e.code}>
+                          {lang === 'fr' ? e.label_fr : e.label_en}
+                        </option>
+                      ))}
+                    </select>
+                    <label for={`d-${u.uploadId}`}>{t(lang, 'evidence.date')}</label>
+                    <input id={`d-${u.uploadId}`} type="date" name={`evidence_date_${u.uploadId}`} value={u.evidenceDate} />
+                    <label for={`s-${u.uploadId}`}>{t(lang, 'evidence.source')}</label>
+                    <input id={`s-${u.uploadId}`} type="text" name={`evidence_source_${u.uploadId}`} value={u.source} />
+                  </div>
+                ))}
+              </div>
+              <label for="evidence-file" class="visually-hidden">{t(lang, 'evidence.add')}</label>
+              <input id="evidence-file" type="file" name="evidence_file" accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,image/*" capture="environment" />
+              <div id="upload-status" role="status" aria-live="polite"></div>
+            </fieldset>
+            )}
+          </details>
+        ))}
+
+        {otherProblems.length > 0 && (
+          <div class="hints" data-hint-for="_other">
+            <p>{t(lang, 'card.other_problems')}</p>
+            {otherProblems.map((p) => (
+              <p class={p.severity === 'error' ? 'hint-error' : 'hint-warning'}>{p.message}</p>
+            ))}
+          </div>
+        )}
+        <div class="hints" data-hint-for="_live" aria-live="polite"></div>
+
+        <div class="actions">
+          <button class="button" type="submit" name="action" value="update">{t(lang, 'card.submit')}</button>
+          <button class="button button-quiet" type="submit" name="action" value="confirm">{t(lang, 'card.nothing_changed')}</button>
+        </div>
+      </form>
+    ) : (
+      <p class="notice">{t(lang, 'card.not_allowed')}</p>
+    )
+  }
+  </div>
+
+  <script type="application/json" id="card-config" set:html={configJson} />
+</Base>
+
+<script>
+  import '../../../scripts/update-card';
+</script>
+
+<style>
+  .crumb a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .focus-head h1 {
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+  .item-type {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .activity-card {
+    margin: var(--space-4) 0;
+  }
+  .activity-card summary,
+  .section > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: var(--weight-bold);
+    cursor: pointer;
+  }
+  .activity-card[open] summary {
+    margin-bottom: var(--space-4);
+  }
+  /* Tick and cross chips: one per field, following the checks as you type. */
+  .check-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .check-chips li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0.125rem var(--space-3) 0.125rem var(--space-2);
+    border-radius: var(--radius-round);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+  }
+  .check-chips li[data-state='ok'] {
+    background: var(--color-rag-green-bg) var(--gradient-green-soft);
+    color: var(--color-rag-green);
+  }
+  .check-chips li[data-state='warning'] {
+    background: var(--color-rag-amber-bg) var(--gradient-amber-soft);
+    color: var(--color-rag-amber);
+  }
+  .check-chips li[data-state='error'] {
+    background: var(--color-rag-red-bg) var(--gradient-red-soft);
+    color: var(--color-rag-red);
+  }
+  .check-chips li[data-state='ok'] .chip-bad,
+  .check-chips li:not([data-state='ok']) .chip-ok {
+    display: none;
+  }
+  .chip-ok,
+  .chip-bad {
+    display: inline-flex;
+  }
+  .section {
+    padding: var(--space-4) 0 0;
+    border-top: 1px solid var(--color-border);
+  }
+  .section > summary {
+    font-size: var(--text-base);
+    margin-bottom: var(--space-3);
+  }
+  .section > summary::after {
+    content: '';
+    margin-left: auto;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-right: 2px solid var(--color-text-muted);
+    border-bottom: 2px solid var(--color-text-muted);
+    transform: rotate(45deg);
+  }
+  .section[open] > summary::after {
+    transform: rotate(-135deg);
+  }
+  .section > .field + .field {
+    margin-top: var(--space-4);
+  }
+  .crumb {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    margin-bottom: var(--space-2);
+  }
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: var(--space-3) var(--space-6);
+    margin: 0 0 var(--space-4);
+    font-size: var(--text-md);
+  }
+  dt {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  dd {
+    margin: 0;
+  }
+  .sub-stale {
+    display: block;
+    color: var(--color-rag-amber);
+    font-size: var(--text-sm);
+  }
+  .evidence ul {
+    padding-left: var(--space-4);
+    font-size: var(--text-md);
+  }
+  #update-card {
+    margin-top: var(--space-6);
+    padding: var(--space-6);
+  }
+  #update-card h2 {
+    margin-top: 0;
+  }
+  #card-status:empty {
+    display: none;
+  }
+  #card-status {
+    font-size: var(--text-md);
+    color: var(--color-text-muted);
+  }
+  #card-status.error {
+    color: var(--color-text);
+  }
+  .actions {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin: var(--space-6) calc(-1 * var(--space-6)) calc(-1 * var(--space-6));
+    padding: var(--space-4) var(--space-6);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+  }
+  .on-behalf {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+  .upload {
+    padding: var(--space-3);
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-sm);
+  }
+  #evidence-uploads {
+    background: var(--color-canvas);
+  }
+  @media (max-width: 767px) {
+    #update-card {
+      padding: var(--space-4);
+    }
+    .actions {
+      margin: var(--space-4) calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+      padding: var(--space-3) var(--space-4);
+    }
+  }
+</style>
