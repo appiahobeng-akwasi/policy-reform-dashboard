@@ -43,7 +43,7 @@
     "@supabase/supabase-js": "~2.117.0",
     "@tus/s3-store": "^2.1.0",
     "@tus/server": "^2.4.7",
-    "astro": "^7.4.5",
+    "astro": "^7.4.12",
     "nodemailer": "^10.3.1",
     "pg": "^8.23.1",
     "react": "^19.3.1",
